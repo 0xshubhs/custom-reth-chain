@@ -1,0 +1,42 @@
+[package]
+name = "example-custom-poa-node"
+version = "0.0.0"
+publish = false
+edition.workspace = true
+license.workspace = true
+description = "A custom POA (Proof of Authority) node implementation using Reth"
+
+[dependencies]
+# Reth core dependencies
+reth-chainspec.workspace = true
+reth-consensus.workspace = true
+reth-ethereum = { workspace = true, features = ["node", "test-utils"] }
+reth-ethereum-forks.workspace = true
+reth-primitives-traits.workspace = true
+reth-execution-types.workspace = true
+reth-network-peers.workspace = true
+
+# Alloy dependencies
+alloy-consensus.workspace = true
+alloy-genesis.workspace = true
+alloy-primitives.workspace = true
+alloy-eips.workspace = true
+alloy-signer.workspace = true
+alloy-signer-local.workspace = true
+alloy-rlp.workspace = true
+
+# Async runtime
+tokio.workspace = true
+futures-util.workspace = true
+
+# Serialization
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+
+# Utilities
+eyre.workspace = true
+reth-tracing.workspace = true
+thiserror.workspace = true
+
+[lints]
+workspace = true
