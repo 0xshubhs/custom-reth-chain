@@ -1,0 +1,70 @@
+# Development docker-compose - Uses `just dev` for live development
+
+services:
+  # POA Node - Development Mode with `just dev`
+  poa-node:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    container_name: poa-node-dev
+    restart: unless-stopped
+    ports:
+      - "8545:8545"   # HTTP RPC
+      - "8546:8546"   # WebSocket RPC
+      - "30303:30303" # P2P TCP
+      - "30303:30303/udp" # P2P UDP
+      - "9001:9001"   # Metrics
+    volumes:
+      - .:/app:cached
+      - cargo-cache:/usr/local/cargo/registry
+      - target-cache:/app/target
+      - poa-data:/app/data
+    environment:
+      - RUST_LOG=info
+      - RUST_BACKTRACE=1
+    networks:
+      - poa-network
+    working_dir: /app
+    command: ["just", "dev"]
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8545 -X POST -H 'Content-Type: application/json' -d '{\"jsonrpc\":\"2.0\",\"method\":\"eth_blockNumber\",\"params\":[],\"id\":1}' || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 120s
+
+  # Scoutup Explorer - Go-based Block Explorer (Development)
+  scoutup-explorer:
+    build:
+      context: ./scoutup
+      dockerfile: Dockerfile.dev
+    container_name: scoutup-explorer-dev
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./scoutup:/app:cached
+      - go-cache:/go/pkg
+    environment:
+      - RPC_ENDPOINT=http://poa-node:8545
+      - EXPLORER_PORT=3000
+    depends_on:
+      - poa-node
+    networks:
+      - poa-network
+    working_dir: /app
+    command: ["go", "run", "main.go"]
+
+volumes:
+  poa-data:
+    driver: local
+  cargo-cache:
+    driver: local
+  target-cache:
+    driver: local
+  go-cache:
+    driver: local
+
+networks:
+  poa-network:
+    driver: bridge

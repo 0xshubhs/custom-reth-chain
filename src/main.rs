@@ -6,7 +6,7 @@
 //! - All Ethereum hardforks (Shanghai, Cancun, Prague, etc.)
 //! - Standard JSON-RPC APIs
 //! - Transaction types and formats
-//!
+//!    
 //! ## Architecture
 //!
 //! ```text

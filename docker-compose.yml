@@ -1,0 +1,53 @@
+services:
+  # POA Node - Custom Reth Chain
+  poa-node:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: poa-node
+    restart: unless-stopped
+    ports:
+      - "8545:8545"   # HTTP RPC
+      - "8546:8546"   # WebSocket RPC
+      - "30303:30303" # P2P TCP
+      - "30303:30303/udp" # P2P UDP
+      - "9001:9001"   # Metrics
+    volumes:
+      - poa-data:/app/data
+    environment:
+      - RUST_LOG=info
+      - RUST_BACKTRACE=1
+    networks:
+      - poa-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8545", "-X", "POST", "-H", "Content-Type: application/json", "-d", '{"jsonrpc":"2.0","method":"eth_blockNumber","params":[],"id":1}']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  # Scoutup Explorer - Go-based Block Explorer
+  scoutup-explorer:
+    build:
+      context: ./scoutup
+      dockerfile: Dockerfile
+    container_name: scoutup-explorer
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      - RPC_ENDPOINT=http://poa-node:8545
+      - EXPLORER_PORT=3000
+    depends_on:
+      poa-node:
+        condition: service_healthy
+    networks:
+      - poa-network
+
+volumes:
+  poa-data:
+    driver: local
+
+networks:
+  poa-network:
+    driver: bridge
