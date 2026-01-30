@@ -29,6 +29,16 @@ func globalWorkspace() string {
 	return path.Join(os.TempDir(), scoutupGlobalWorkspace)
 }
 
+// if on linux	system, use /tmp
+// func globalWorkspace() string {
+// 	// Use home directory instead of /tmp for Docker Desktop compatibility
+// 	homeDir, err := os.UserHomeDir()
+// 	if err != nil {
+// 		return path.Join(os.TempDir(), scoutupGlobalWorkspace)
+// 	}
+// 	return path.Join(homeDir, "."+scoutupGlobalWorkspace)
+// }
+
 func createGlobalWorkspace() (string, error) {
 	globalWorkspace := globalWorkspace()
 	err := os.MkdirAll(globalWorkspace, 0755)
