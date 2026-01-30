@@ -240,7 +240,7 @@ pub fn create_genesis(config: GenesisConfig) -> Genesis {
 
     // Build the chain config JSON
     let chain_config = serde_json::json!({
-        "chainId": config.chain_id,
+        "chainId": 9323310,
         "homesteadBlock": 0,
         "eip150Block": 0,
         "eip155Block": 0,
