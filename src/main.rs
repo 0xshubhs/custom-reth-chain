@@ -72,7 +72,7 @@ use reth_ethereum::{
     rpc::api::eth::helpers::EthState,
     tasks::TaskManager,
 };
-use std::{path::PathBuf, time::Duration};
+use std::{net::{IpAddr, Ipv4Addr}, path::PathBuf, time::Duration};
 
 /// Main entry point for the POA node
 #[tokio::main]
@@ -99,10 +99,17 @@ async fn main() -> eyre::Result<()> {
         ..Default::default()
     };
 
+    // Configure RPC server to listen on all interfaces (needed for Docker)
+    let mut rpc_args = RpcServerArgs::default();
+    rpc_args.http = true;
+    rpc_args.http_addr = IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0));
+    rpc_args.ws = true;
+    rpc_args.ws_addr = IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0));
+
     // Build node configuration with interval-based mining for POA
     let node_config = NodeConfig::test()
         .with_dev(dev_args)
-        .with_rpc(RpcServerArgs::default().with_http())
+        .with_rpc(rpc_args)
         .with_chain(poa_chain.inner().clone());
 
     println!("Dev mode enabled: {}", node_config.dev.dev);
@@ -121,7 +128,7 @@ async fn main() -> eyre::Result<()> {
         .launch_with_debug_capabilities()
         .await?;
 
-    println!("\n✅ POA node started successfully!");
+    // println!("\n✅ POA node started successfully!");
     println!("Genesis hash: {:?}", poa_chain.inner().genesis_hash());
 
     // Get in-process RPC API
