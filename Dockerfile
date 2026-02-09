@@ -1,44 +1,19 @@
 # Rust POA Node Dockerfile
-FROM rust:1.83-bookworm AS builder
-
-# Install build dependencies
-RUN apt-get update && apt-get install -y \
-    build-essential \
-    clang \
-    libclang-dev \
-    pkg-config \   
-    libssl-dev \
-    git \
-    && rm -rf /var/lib/apt/lists/*
-
-# Install just command runner
-RUN cargo install just
-
-WORKDIR /app
-
-# Copy the entire project
-COPY Cargo.toml Cargo.lock* ./
-COPY src ./src
-COPY Justfile ./
-COPY sample-genesis.json ./
-
-# Build the project in release mode
-RUN cargo build --release -p example-custom-poa-node
-
-# Runtime stage
-FROM debian:bookworm-slim
+# Uses pre-built binary from local build
+FROM ubuntu:24.04
 
 # Install runtime dependencies
 RUN apt-get update && apt-get install -y \
     ca-certificates \
     libssl3 \
+    curl \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
-# Copy the built binary
-COPY --from=builder /app/target/release/example-custom-poa-node /usr/local/bin/poa-node
-COPY --from=builder /app/sample-genesis.json ./
+# Copy the pre-built binary from local target/release
+COPY target/release/example-custom-poa-node /usr/local/bin/poa-node
+COPY sample-genesis.json ./
 
 # Create data directory
 RUN mkdir -p /app/data
