@@ -4,7 +4,7 @@
 //! that are compatible with Ethereum tooling while supporting POA consensus.
 
 use alloy_genesis::{Genesis, GenesisAccount};
-use alloy_primitives::{address, bytes, Address, U256};
+use alloy_primitives::{address, b256, bytes, Address, Bytes, B256, U256};
 use std::collections::BTreeMap;
 
 /// Default balance for prefunded accounts (10,000 ETH in wei)
@@ -71,7 +71,7 @@ pub struct GenesisConfig {
 impl Default for GenesisConfig {
     fn default() -> Self {
         Self {
-            chain_id: 9323310, // Meowchain chain ID
+            chain_id: 9323310, 
             gas_limit: 30_000_000,
             prefunded_accounts: BTreeMap::new(),
             signers: vec![],
@@ -262,6 +262,102 @@ fn system_contract_alloc() -> BTreeMap<Address, GenesisAccount> {
     contracts
 }
 
+/// Returns ERC-4337 Account Abstraction and ecosystem infrastructure contracts.
+/// These are pre-deployed in genesis for immediate availability from block 0.
+///
+/// Contracts included:
+/// - EntryPoint v0.7: Core ERC-4337 contract for UserOperation validation/execution
+/// - WETH9: Wrapped native token for paymaster operations and DeFi
+/// - Multicall3: Batch RPC calls used by bundlers for validation
+/// - CREATE2 Deployer: Deterministic contract deployment (Nick's method)
+/// - SimpleAccountFactory: Reference ERC-4337 smart wallet factory
+fn erc4337_contract_alloc() -> BTreeMap<Address, GenesisAccount> {
+    let mut contracts = BTreeMap::new();
+
+    // ERC-4337 EntryPoint v0.7 (canonical address)
+    // Core contract that validates and executes UserOperations for account abstraction
+    contracts.insert(
+        address!("0000000071727De22E5E9d8BAf0edAc6f37da032"),
+        GenesisAccount {
+            balance: U256::ZERO,
+            nonce: Some(1),
+            code: Some(Bytes::from_static(include_bytes!("bytecodes/entrypoint_v07.bin"))),
+            storage: None,
+            private_key: None,
+        },
+    );
+
+    // WETH9: Wrapped Ether (canonical Ethereum mainnet address)
+    // Required for paymaster operations, DeFi protocols, and token wrapping
+    let mut weth_storage = BTreeMap::new();
+    // Slot 0: name = "Wrapped Ether" (Solidity short string encoding)
+    weth_storage.insert(
+        B256::ZERO,
+        b256!("577261707065642045746865720000000000000000000000000000000000001a"),
+    );
+    // Slot 1: symbol = "WETH" (Solidity short string encoding)
+    weth_storage.insert(
+        b256!("0000000000000000000000000000000000000000000000000000000000000001"),
+        b256!("5745544800000000000000000000000000000000000000000000000000000008"),
+    );
+    // Slot 2: decimals = 18
+    weth_storage.insert(
+        b256!("0000000000000000000000000000000000000000000000000000000000000002"),
+        b256!("0000000000000000000000000000000000000000000000000000000000000012"),
+    );
+    contracts.insert(
+        address!("C02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"),
+        GenesisAccount {
+            balance: U256::ZERO,
+            nonce: Some(1),
+            code: Some(Bytes::from_static(include_bytes!("bytecodes/weth9.bin"))),
+            storage: Some(weth_storage),
+            private_key: None,
+        },
+    );
+
+    // Multicall3 (canonical address)
+    // Batch RPC calls used by bundlers for UserOp validation and frontends for efficient reads
+    contracts.insert(
+        address!("cA11bde05977b3631167028862bE2a173976CA11"),
+        GenesisAccount {
+            balance: U256::ZERO,
+            nonce: Some(1),
+            code: Some(Bytes::from_static(include_bytes!("bytecodes/multicall3.bin"))),
+            storage: None,
+            private_key: None,
+        },
+    );
+
+    // CREATE2 Deterministic Deployment Proxy (Nick's method, canonical address)
+    // Enables deterministic contract addresses across all EVM chains
+    contracts.insert(
+        address!("4e59b44847b379578588920cA78FbF26c0B4956C"),
+        GenesisAccount {
+            balance: U256::ZERO,
+            nonce: Some(1),
+            code: Some(Bytes::from_static(include_bytes!("bytecodes/create2_deployer.bin"))),
+            storage: None,
+            private_key: None,
+        },
+    );
+
+    // SimpleAccountFactory (ERC-4337 reference implementation)
+    // Factory for creating minimal smart wallet accounts compatible with EntryPoint v0.7
+    contracts.insert(
+        address!("9406Cc6185a346906296840746125a0E44976454"),
+        GenesisAccount {
+            balance: U256::ZERO,
+            nonce: Some(1),
+            code: Some(Bytes::from_static(include_bytes!("bytecodes/simple_account_factory.bin"))),
+            storage: None,
+            private_key: None,
+        },
+    );
+
+    contracts
+}
+
 /// Create a genesis configuration from the config
 pub fn create_genesis(config: GenesisConfig) -> Genesis {
     // Build the extra data field for POA:
@@ -290,6 +386,9 @@ pub fn create_genesis(config: GenesisConfig) -> Genesis {
 
     // Add system contracts required by Cancun/Prague hardforks
     alloc.extend(system_contract_alloc());
+
+    // Add ERC-4337 Account Abstraction and infrastructure contracts
+    alloc.extend(erc4337_contract_alloc());
 
     // Build the chain config JSON
     let chain_config = serde_json::json!({
@@ -358,7 +457,7 @@ mod tests {
 
         // Verify accounts are prefunded
         assert!(!genesis.alloc.is_empty());
-        assert_eq!(genesis.alloc.len(), 24); // 20 dev accounts + 4 system contracts
+        assert_eq!(genesis.alloc.len(), 29); // 20 dev accounts + 4 system contracts + 5 ERC-4337/infra
 
         // Verify extra data contains signers
         assert!(genesis.extra_data.len() >= 32 + 65); // At least vanity + seal
@@ -372,8 +471,8 @@ mod tests {
         // Verify production chain ID
         assert_eq!(genesis.config.chain_id, 9323310);
 
-        // Verify: 8 prefunded accounts (5 signers + treasury + ops + community) + 4 system contracts
-        assert_eq!(genesis.alloc.len(), 12);
+        // Verify: 8 prefunded accounts (5 signers + treasury + ops + community) + 4 system contracts + 5 ERC-4337/infra
+        assert_eq!(genesis.alloc.len(), 17);
 
         // Verify gas limit is 60M
         assert_eq!(genesis.gas_limit, 60_000_000);
@@ -425,5 +524,52 @@ mod tests {
 
         // Extra data should be: 32 (vanity) + 2*20 (signers) + 65 (seal) = 137 bytes
         assert_eq!(genesis.extra_data.len(), 32 + 40 + 65);
+    }
+
+    #[test]
+    fn test_erc4337_contracts_in_genesis() {
+        let genesis = create_dev_genesis();
+
+        // EntryPoint v0.7 at canonical address
+        let entrypoint = genesis
+            .alloc
+            .get(&address!("0000000071727De22E5E9d8BAf0edAc6f37da032"));
+        assert!(entrypoint.is_some(), "EntryPoint v0.7 must be in genesis");
+        assert!(entrypoint.unwrap().code.is_some(), "EntryPoint must have code");
+        assert_eq!(entrypoint.unwrap().nonce, Some(1));
+
+        // WETH9 at canonical mainnet address
+        let weth = genesis
+            .alloc
+            .get(&address!("C02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"));
+        assert!(weth.is_some(), "WETH9 must be in genesis");
+        assert!(weth.unwrap().code.is_some(), "WETH9 must have code");
+        assert!(weth.unwrap().storage.is_some(), "WETH9 must have initialized storage");
+        let weth_storage = weth.unwrap().storage.as_ref().unwrap();
+        assert_eq!(weth_storage.len(), 3, "WETH9 needs name, symbol, decimals slots");
+
+        // Multicall3 at canonical address
+        assert!(
+            genesis
+                .alloc
+                .contains_key(&address!("cA11bde05977b3631167028862bE2a173976CA11")),
+            "Multicall3 must be in genesis"
+        );
+
+        // CREATE2 Deployer at canonical address
+        assert!(
+            genesis
+                .alloc
+                .contains_key(&address!("4e59b44847b379578588920cA78FbF26c0B4956C")),
+            "CREATE2 Deployer must be in genesis"
+        );
+
+        // SimpleAccountFactory
+        assert!(
+            genesis
+                .alloc
+                .contains_key(&address!("9406Cc6185a346906296840746125a0E44976454")),
+            "SimpleAccountFactory must be in genesis"
+        );
     }
 }
