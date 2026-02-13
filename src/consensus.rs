@@ -911,4 +911,345 @@ mod tests {
         };
         assert!(consensus.validate_difficulty(&header, &signers[0]).is_err());
     }
+
+    // =========================================================================
+    // FullConsensus trait: validate_block_post_execution tests
+    // =========================================================================
+
+    use reth_ethereum::BlockBody;
+    use alloy_primitives::Bloom;
+    use reth_execution_types::BlockExecutionResult;
+    use reth_primitives_traits::RecoveredBlock;
+
+    fn make_recovered_block(gas_used: u64, gas_limit: u64, receipts_root: B256, logs_bloom: Bloom) -> RecoveredBlock<reth_ethereum::Block> {
+        let header = Header {
+            gas_used,
+            gas_limit,
+            receipts_root,
+            logs_bloom,
+            ..Default::default()
+        };
+        let body = BlockBody::default();
+        let block = reth_ethereum::Block { header, body };
+        let sealed = SealedBlock::seal_slow(block);
+        RecoveredBlock::new_sealed(sealed, vec![])
+    }
+
+    fn make_execution_result(gas_used: u64) -> BlockExecutionResult<reth_ethereum::Receipt> {
+        BlockExecutionResult {
+            receipts: vec![],
+            requests: Default::default(),
+            gas_used,
+            blob_gas_used: 0,
+        }
+    }
+
+    #[test]
+    fn test_validate_block_post_execution_gas_used_match() {
+        let consensus = dev_consensus();
+        let block = make_recovered_block(1000, 30_000_000, B256::ZERO, Bloom::ZERO);
+        let result = make_execution_result(1000);
+
+        let validation: Result<(), ConsensusError> = FullConsensus::<reth_ethereum::EthPrimitives>::validate_block_post_execution(
+            &consensus,
+            &block,
+            &result,
+            None,
+        );
+        assert!(validation.is_ok());
+    }
+
+    #[test]
+    fn test_validate_block_post_execution_gas_used_mismatch() {
+        let consensus = dev_consensus();
+        let block = make_recovered_block(1000, 30_000_000, B256::ZERO, Bloom::ZERO);
+        let result = make_execution_result(2000); // Mismatch: header says 1000, execution says 2000
+
+        let validation: Result<(), ConsensusError> = FullConsensus::<reth_ethereum::EthPrimitives>::validate_block_post_execution(
+            &consensus,
+            &block,
+            &result,
+            None,
+        );
+        assert!(validation.is_err());
+        match validation.unwrap_err() {
+            ConsensusError::BlockGasUsed { gas, .. } => {
+                assert_eq!(gas.got, 2000);
+                assert_eq!(gas.expected, 1000);
+            }
+            other => panic!("Expected BlockGasUsed, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_validate_block_post_execution_receipt_root_mismatch() {
+        let consensus = dev_consensus();
+        let expected_root = B256::from([0xAA; 32]);
+        let block = make_recovered_block(0, 30_000_000, expected_root, Bloom::ZERO);
+        let result = make_execution_result(0);
+
+        let wrong_root = B256::from([0xBB; 32]); // Different from header's receipts_root
+        let receipt_root_bloom = Some((wrong_root, Bloom::ZERO));
+
+        let validation: Result<(), ConsensusError> = FullConsensus::<reth_ethereum::EthPrimitives>::validate_block_post_execution(
+            &consensus,
+            &block,
+            &result,
+            receipt_root_bloom,
+        );
+        assert!(validation.is_err());
+    }
+
+    #[test]
+    fn test_validate_block_post_execution_logs_bloom_mismatch() {
+        let consensus = dev_consensus();
+        let expected_bloom = Bloom::from([0xAA; 256]);
+        let block = make_recovered_block(0, 30_000_000, B256::ZERO, expected_bloom);
+        let result = make_execution_result(0);
+
+        let wrong_bloom = Bloom::from([0xBB; 256]);
+        let receipt_root_bloom = Some((B256::ZERO, wrong_bloom));
+
+        let validation: Result<(), ConsensusError> = FullConsensus::<reth_ethereum::EthPrimitives>::validate_block_post_execution(
+            &consensus,
+            &block,
+            &result,
+            receipt_root_bloom,
+        );
+        assert!(validation.is_err());
+    }
+
+    #[test]
+    fn test_validate_block_post_execution_no_receipt_root() {
+        let consensus = dev_consensus();
+        let block = make_recovered_block(5000, 30_000_000, B256::ZERO, Bloom::ZERO);
+        let result = make_execution_result(5000);
+
+        // None means skip receipt root and logs bloom check
+        let validation: Result<(), ConsensusError> = FullConsensus::<reth_ethereum::EthPrimitives>::validate_block_post_execution(
+            &consensus,
+            &block,
+            &result,
+            None,
+        );
+        assert!(validation.is_ok());
+    }
+
+    // =========================================================================
+    // Consensus trait: validate_body_against_header, validate_block_pre_execution
+    // =========================================================================
+
+    fn make_sealed_block(gas_used: u64, gas_limit: u64, extra_data_len: usize) -> SealedBlock<reth_ethereum::Block> {
+        let header = Header {
+            gas_used,
+            gas_limit,
+            extra_data: vec![0u8; extra_data_len].into(),
+            ..Default::default()
+        };
+        let body = BlockBody::default();
+        let block = reth_ethereum::Block { header, body };
+        SealedBlock::seal_slow(block)
+    }
+
+    #[test]
+    fn test_validate_body_against_header_gas_ok() {
+        let consensus = dev_consensus();
+        let header = Header {
+            gas_used: 1000,
+            gas_limit: 30_000_000,
+            ..Default::default()
+        };
+        let sealed = SealedHeader::seal_slow(header);
+        let body = BlockBody::default();
+
+        let result: Result<(), ConsensusError> = Consensus::<reth_ethereum::Block>::validate_body_against_header(
+            &consensus,
+            &body,
+            &sealed,
+        );
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_validate_body_against_header_gas_exceeds() {
+        let consensus = dev_consensus();
+        let header = Header {
+            gas_used: 31_000_000, // Exceeds gas_limit
+            gas_limit: 30_000_000,
+            ..Default::default()
+        };
+        let sealed = SealedHeader::seal_slow(header);
+        let body = BlockBody::default();
+
+        let result: Result<(), ConsensusError> = Consensus::<reth_ethereum::Block>::validate_body_against_header(
+            &consensus,
+            &body,
+            &sealed,
+        );
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_validate_block_pre_execution_production_short_extra_data() {
+        let consensus = production_consensus();
+        let sealed = make_sealed_block(0, 30_000_000, 10); // Too short for POA
+
+        let result: Result<(), ConsensusError> = Consensus::<reth_ethereum::Block>::validate_block_pre_execution(
+            &consensus,
+            &sealed,
+        );
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_validate_block_pre_execution_dev_short_extra_data() {
+        let consensus = dev_consensus();
+        let sealed = make_sealed_block(0, 30_000_000, 10); // Short but dev mode allows it
+
+        let result: Result<(), ConsensusError> = Consensus::<reth_ethereum::Block>::validate_block_pre_execution(
+            &consensus,
+            &sealed,
+        );
+        assert!(result.is_ok());
+    }
+
+    // =========================================================================
+    // Boundary tests
+    // =========================================================================
+
+    #[test]
+    fn test_validate_header_against_parent_gas_limit_exact_boundary() {
+        let consensus = dev_consensus();
+
+        let parent_gas_limit: u64 = 30_000_000;
+        let max_change = parent_gas_limit / 1024;
+
+        let parent = Header {
+            number: 0,
+            gas_limit: parent_gas_limit,
+            timestamp: 0,
+            ..Default::default()
+        };
+        let sealed_parent = SealedHeader::seal_slow(parent);
+
+        // Exactly at max increase boundary should pass
+        let child_increase = Header {
+            number: 1,
+            gas_limit: parent_gas_limit + max_change,
+            timestamp: 2,
+            parent_hash: sealed_parent.hash(),
+            ..Default::default()
+        };
+        let sealed_child = SealedHeader::seal_slow(child_increase);
+        assert!(consensus.validate_header_against_parent(&sealed_child, &sealed_parent).is_ok());
+
+        // Exactly at max decrease boundary should pass
+        let child_decrease = Header {
+            number: 1,
+            gas_limit: parent_gas_limit - max_change,
+            timestamp: 2,
+            parent_hash: sealed_parent.hash(),
+            ..Default::default()
+        };
+        let sealed_child = SealedHeader::seal_slow(child_decrease);
+        assert!(consensus.validate_header_against_parent(&sealed_child, &sealed_parent).is_ok());
+    }
+
+    #[test]
+    fn test_validate_header_against_parent_timestamp_exact_period() {
+        let consensus = dev_consensus();
+        let block_period = consensus.chain_spec.block_period(); // 2 seconds
+
+        let parent = Header {
+            number: 0,
+            gas_limit: 30_000_000,
+            timestamp: 100,
+            ..Default::default()
+        };
+        let sealed_parent = SealedHeader::seal_slow(parent);
+
+        // Exactly at minimum timestamp (parent + block_period) should pass
+        let child = Header {
+            number: 1,
+            gas_limit: 30_000_000,
+            timestamp: 100 + block_period,
+            parent_hash: sealed_parent.hash(),
+            ..Default::default()
+        };
+        let sealed_child = SealedHeader::seal_slow(child);
+        assert!(consensus.validate_header_against_parent(&sealed_child, &sealed_parent).is_ok());
+
+        // One second before should fail
+        let child_too_early = Header {
+            number: 1,
+            gas_limit: 30_000_000,
+            timestamp: 100 + block_period - 1,
+            parent_hash: sealed_parent.hash(),
+            ..Default::default()
+        };
+        let sealed_child_early = SealedHeader::seal_slow(child_too_early);
+        assert!(consensus.validate_header_against_parent(&sealed_child_early, &sealed_parent).is_err());
+    }
+
+    // =========================================================================
+    // Cross-module integration: full signed block passes all consensus checks
+    // =========================================================================
+
+    #[tokio::test]
+    async fn test_full_signed_block_passes_all_consensus() {
+        let chain = Arc::new(crate::chainspec::PoaChainSpec::dev_chain());
+        let consensus = PoaConsensus::new(chain.clone());
+
+        let manager = Arc::new(SignerManager::new());
+        let address = manager
+            .add_signer_from_hex(dev::DEV_PRIVATE_KEYS[0])
+            .await
+            .unwrap();
+
+        // Verify the signer is authorized
+        assert!(chain.is_authorized_signer(&address));
+
+        let sealer = BlockSealer::new(manager);
+
+        // Create a header with valid POA extra_data format
+        let header = Header {
+            number: 1,
+            gas_limit: 30_000_000,
+            gas_used: 0,
+            timestamp: 12345,
+            extra_data: vec![0u8; EXTRA_VANITY_LENGTH + EXTRA_SEAL_LENGTH].into(),
+            ..Default::default()
+        };
+
+        // Sign the header
+        let signed_header = sealer.seal_header(header, &address).await.unwrap();
+        let sealed_header = SealedHeader::seal_slow(signed_header.clone());
+
+        // 1. validate_header should pass (signature verified)
+        let header_result: Result<(), ConsensusError> =
+            HeaderValidator::validate_header(&consensus, &sealed_header);
+        assert!(header_result.is_ok(), "Header validation should pass");
+
+        // 2. validate_block_pre_execution should pass (extra_data long enough)
+        let body = BlockBody::default();
+        let block = reth_ethereum::Block { header: signed_header.clone(), body };
+        let sealed_block = SealedBlock::seal_slow(block);
+        let pre_exec_result: Result<(), ConsensusError> =
+            Consensus::<reth_ethereum::Block>::validate_block_pre_execution(&consensus, &sealed_block);
+        assert!(pre_exec_result.is_ok(), "Pre-execution validation should pass");
+
+        // 3. validate_block_post_execution should pass (matching gas_used)
+        let body2 = BlockBody::default();
+        let block2 = reth_ethereum::Block { header: signed_header, body: body2 };
+        let sealed2 = SealedBlock::seal_slow(block2);
+        let recovered = RecoveredBlock::new_sealed(sealed2, vec![]);
+        let exec_result = make_execution_result(0);
+        let post_exec: Result<(), ConsensusError> = FullConsensus::<reth_ethereum::EthPrimitives>::validate_block_post_execution(
+            &consensus,
+            &recovered,
+            &exec_result,
+            None,
+        );
+        assert!(post_exec.is_ok(), "Post-execution validation should pass");
+    }
 }

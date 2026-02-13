@@ -19,6 +19,18 @@ reth-tracing = { git = "https://github.com/paradigmxyz/reth", branch = "main" }
 reth-payload-primitives = { git = "https://github.com/paradigmxyz/reth", branch = "main" }
 reth-db = { git = "https://github.com/paradigmxyz/reth", branch = "main" }
 
+# Payload builder dependencies
+reth-ethereum-payload-builder = { git = "https://github.com/paradigmxyz/reth", branch = "main" }
+reth-basic-payload-builder = { git = "https://github.com/paradigmxyz/reth", branch = "main" }
+reth-evm = { git = "https://github.com/paradigmxyz/reth", branch = "main" }
+reth-transaction-pool = { git = "https://github.com/paradigmxyz/reth", branch = "main" }
+reth-ethereum-engine-primitives = { git = "https://github.com/paradigmxyz/reth", branch = "main" }
+reth-payload-builder-primitives = { git = "https://github.com/paradigmxyz/reth", branch = "main" }
+
+# RPC dependencies
+jsonrpsee = { version = "0.26", features = ["server", "macros"] }
+async-trait = "0.1"
+
 # Alloy dependencies (let cargo resolve compatible versions)
 alloy-consensus = "1"
 alloy-genesis = "1"

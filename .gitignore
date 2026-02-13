@@ -21,3 +21,5 @@ target
 #.idea/
 data/
 # claude.md
+# SigScan generated signatures
+signatures/

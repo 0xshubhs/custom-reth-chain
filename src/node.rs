@@ -6,6 +6,8 @@
 
 use crate::chainspec::PoaChainSpec;
 use crate::consensus::PoaConsensus;
+use crate::payload::PoaPayloadBuilderBuilder;
+use crate::signer::SignerManager;
 use std::sync::Arc;
 
 // Node builder types
@@ -20,7 +22,7 @@ use reth_ethereum::node::api::{FullNodeComponents, PayloadAttributesBuilder};
 
 // Ethereum component builders (pool, network, executor, payload)
 use reth_ethereum::node::{
-    payload::EthereumPayloadBuilder, EthEngineTypes, EthereumAddOns, EthereumEngineValidatorBuilder,
+    EthEngineTypes, EthereumAddOns, EthereumEngineValidatorBuilder,
     EthereumEthApiBuilder, EthereumExecutorBuilder, EthereumNetworkBuilder, EthereumPoolBuilder,
 };
 
@@ -100,14 +102,15 @@ where
 ///       ├── Pool: EthereumPoolBuilder (standard tx pool)
 ///       ├── Network: EthereumNetworkBuilder (standard P2P)
 ///       ├── Executor: EthereumExecutorBuilder (standard EVM)
-///       ├── Payload: EthereumPayloadBuilder (standard block building)
-///       └── Consensus: PoaConsensusBuilder ← OUR CUSTOM CONSENSUS
+///       ├── Payload: PoaPayloadBuilder ← CUSTOM (signs blocks, sets difficulty)
+///       └── Consensus: PoaConsensusBuilder ← CUSTOM (validates POA signatures)
 /// ```
 #[derive(Debug, Clone)]
 pub struct PoaNode {
     /// POA chain specification with signer config.
-    /// Stored here so it can be passed to the consensus builder.
     chain_spec: Arc<PoaChainSpec>,
+    /// Signer manager with signing keys for block production.
+    signer_manager: Arc<SignerManager>,
     /// Whether the node runs in dev mode (relaxed consensus validation)
     dev_mode: bool,
 }
@@ -115,12 +118,22 @@ pub struct PoaNode {
 impl PoaNode {
     /// Create a new PoaNode with the given chain specification.
     pub fn new(chain_spec: Arc<PoaChainSpec>) -> Self {
-        Self { chain_spec, dev_mode: false }
+        Self {
+            chain_spec,
+            signer_manager: Arc::new(SignerManager::new()),
+            dev_mode: false,
+        }
     }
 
     /// Set dev mode on the node
     pub fn with_dev_mode(mut self, dev_mode: bool) -> Self {
         self.dev_mode = dev_mode;
+        self
+    }
+
+    /// Set the signer manager for block production
+    pub fn with_signer_manager(mut self, signer_manager: Arc<SignerManager>) -> Self {
+        self.signer_manager = signer_manager;
         self
     }
 }
@@ -142,7 +155,7 @@ where
     type ComponentsBuilder = ComponentsBuilder<
         N,
         EthereumPoolBuilder,
-        BasicPayloadServiceBuilder<EthereumPayloadBuilder>,
+        BasicPayloadServiceBuilder<PoaPayloadBuilderBuilder>,
         EthereumNetworkBuilder,
         EthereumExecutorBuilder,
         PoaConsensusBuilder,
@@ -156,7 +169,13 @@ where
             .node_types::<N>()
             .pool(EthereumPoolBuilder::default())
             .executor(EthereumExecutorBuilder::default())
-            .payload(BasicPayloadServiceBuilder::default())
+            .payload(BasicPayloadServiceBuilder::new(
+                PoaPayloadBuilderBuilder::new(
+                    self.chain_spec.clone(),
+                    self.signer_manager.clone(),
+                    self.dev_mode,
+                ),
+            ))
             .network(EthereumNetworkBuilder::default())
             .consensus(
                 PoaConsensusBuilder::new(self.chain_spec.clone()).with_dev_mode(self.dev_mode),
@@ -192,5 +211,47 @@ mod tests {
         let chain = Arc::new(PoaChainSpec::dev_chain());
         let node = PoaNode::new(chain.clone());
         assert_eq!(node.chain_spec.signers().len(), 3);
+    }
+
+    #[test]
+    fn test_poa_node_with_dev_mode() {
+        let chain = Arc::new(PoaChainSpec::dev_chain());
+        let node = PoaNode::new(chain).with_dev_mode(true);
+        assert!(node.dev_mode);
+    }
+
+    #[test]
+    fn test_poa_node_with_signer_manager() {
+        let chain = Arc::new(PoaChainSpec::dev_chain());
+        let manager = Arc::new(SignerManager::new());
+        let node = PoaNode::new(chain).with_signer_manager(manager.clone());
+        // Verify the manager is set (compare Arc pointers)
+        assert!(Arc::ptr_eq(&node.signer_manager, &manager));
+    }
+
+    #[test]
+    fn test_poa_node_full_builder_chain() {
+        let chain = Arc::new(PoaChainSpec::dev_chain());
+        let manager = Arc::new(SignerManager::new());
+        let node = PoaNode::new(chain)
+            .with_dev_mode(true)
+            .with_signer_manager(manager.clone());
+        assert!(node.dev_mode);
+        assert!(Arc::ptr_eq(&node.signer_manager, &manager));
+        assert_eq!(node.chain_spec.signers().len(), 3);
+    }
+
+    #[test]
+    fn test_poa_consensus_builder_creation() {
+        let chain = Arc::new(PoaChainSpec::dev_chain());
+        let builder = PoaConsensusBuilder::new(chain);
+        assert!(!builder.dev_mode);
+    }
+
+    #[test]
+    fn test_poa_consensus_builder_dev_mode() {
+        let chain = Arc::new(PoaChainSpec::dev_chain());
+        let builder = PoaConsensusBuilder::new(chain).with_dev_mode(true);
+        assert!(builder.dev_mode);
     }
 }

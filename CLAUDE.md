@@ -9,14 +9,25 @@ Custom Proof of Authority (POA) blockchain built on [Reth](https://github.com/pa
 ## Architecture
 
 ```
-meowchain (PoaNode)
-  ├── Consensus: PoaConsensus (validates headers, signatures, timing, gas limits)
-  ├── Block Production: Reth interval mining (dev mode) - NOT yet POA-signed
-  ├── Block Rewards: EIP-1967 Miner Proxy at 0x...1967 (coinbase)
-  ├── EVM: Identical to Ethereum mainnet (all opcodes, precompiles)
-  ├── Hardforks: Frontier through Prague (all active at genesis)
-  ├── RPC: HTTP (8545) + WebSocket (8546) on 0.0.0.0
-  └── Storage: MDBX persistent database (production NodeBuilder)
+Current State:
+  meowchain (PoaNode)
+    ├── Consensus: PoaConsensus (validates headers, signatures, timing, gas limits)
+    ├── Block Production: PoaPayloadBuilder (wraps EthereumPayloadBuilder + POA signing)
+    ├── Block Rewards: EIP-1967 Miner Proxy at 0x...1967 (coinbase) → Treasury
+    ├── Governance: Gnosis Safe multisig → ChainConfig / SignerRegistry / Treasury
+    ├── EVM: Identical to Ethereum mainnet (sequential, all opcodes, precompiles)
+    ├── Hardforks: Frontier through Prague (all active at genesis)
+    ├── RPC: HTTP (8545) + WS (8546) + meow_* namespace on 0.0.0.0
+    └── Storage: MDBX persistent database (production NodeBuilder)
+
+Target State (MegaETH-inspired):
+  meowchain (PoaNode)
+    ├── Consensus: PoaConsensus + on-chain SignerRegistry reads
+    ├── Block Production: PoaPayloadBuilder (1s blocks, eager mining)
+    ├── EVM: Parallel execution (grevm) + JIT compilation (revmc)
+    ├── Gas: 300M-1B dynamic limit (ChainConfig contract, governance-controlled)
+    ├── RPC: HTTP + WS + admin_*/meow_* namespaces
+    └── Storage: RAM hot cache + MDBX cold storage + async trie
 ```
 
 ## Source Files
@@ -24,22 +35,31 @@ meowchain (PoaNode)
 | File | Purpose | Status |
 |------|---------|--------|
 | `src/main.rs` | Entry point, CLI parsing, production node launch, block monitoring | Working |
-| `src/node.rs` | `PoaNode` type - injects `PoaConsensus` with dev_mode flag | Working |
+| `src/node.rs` | `PoaNode` type - injects `PoaConsensus` + `PoaPayloadBuilder` | Working |
 | `src/consensus.rs` | `PoaConsensus` - signature verification, header validation, post-execution checks | Working |
 | `src/chainspec.rs` | `PoaChainSpec` - hardforks, POA config, signer list | Complete |
-| `src/genesis.rs` | Genesis creation, system contracts, ERC-4337 pre-deploys, EIP-1967 miner proxy | Complete |
-| `src/signer.rs` | `SignerManager` + `BlockSealer` - key management & signing | Working (not in pipeline) |
-| `src/bytecodes/` | Pre-compiled contract bytecodes (.bin/.hex) | Complete |
+| `src/genesis.rs` | Genesis: system contracts, ERC-4337, miner proxy, governance, Safe | Complete |
+| `src/payload.rs` | `PoaPayloadBuilder` - wraps Ethereum builder + POA signing | Complete |
+| `src/rpc.rs` | `meow_*` RPC namespace - chainConfig, signers, nodeInfo | Complete |
+| `src/signer.rs` | `SignerManager` + `BlockSealer` - key management & signing | Complete (in pipeline) |
+| `src/bytecodes/` | Pre-compiled contract bytecodes (.bin/.hex) | Complete (16 files) |
+| `contracts/` | Governance Solidity contracts (ChainConfig, SignerRegistry, Treasury) | Complete |
 
 ## Key Types & Import Paths
 
 - `PoaNode` → `src/node.rs` - custom `Node` impl, replaces `EthereumNode`
 - `PoaConsensus` → `src/consensus.rs` - implements `HeaderValidator`, `Consensus`, `FullConsensus`
 - `PoaConsensusBuilder` → `src/node.rs` - `ConsensusBuilder` trait impl
+- `PoaPayloadBuilder` → `src/payload.rs` - wraps `EthereumPayloadBuilder` + POA signing
+- `PoaPayloadBuilderBuilder` → `src/payload.rs` - `PayloadBuilderBuilder` trait impl
 - `PoaChainSpec` → `src/chainspec.rs` - wraps `ChainSpec` + `PoaConfig`
 - `SignerManager` → `src/signer.rs` - runtime key management (RwLock<HashMap>)
 - `BlockSealer` → `src/signer.rs` - seal/verify block headers
+- `MeowRpc` → `src/rpc.rs` - `meow_*` RPC namespace (chainConfig, signers, nodeInfo)
 - `MINER_PROXY_ADDRESS` → `src/genesis.rs` - EIP-1967 proxy at `0x...1967`
+- `CHAIN_CONFIG_ADDRESS` → `src/genesis.rs` - on-chain config contract
+- `SIGNER_REGISTRY_ADDRESS` → `src/genesis.rs` - on-chain signer registry
+- `TREASURY_ADDRESS` → `src/genesis.rs` - fee distribution contract
 
 ### Reth Import Conventions
 ```rust
@@ -67,28 +87,49 @@ alloy_consensus::BlockHeader           // Use this for header method access (gas
 - [x] **#4** - Post-execution validates gas_used, receipt root, and logs bloom
 - [x] **#5** - Chain ID 9323310 everywhere including sample-genesis.json
 - [x] **#6** - CLI parsing with clap
-- [~] **#1** - Signer loaded at runtime, but blocks still unsigned (needs `PoaPayloadBuilder`)
-- [~] **#7** - Keys loadable from env/CLI, but dev keys still hardcoded
+- [x] **#1** - Signer loaded at runtime + `PoaPayloadBuilder` signs blocks in pipeline
+- [x] **A4** - `PoaPayloadBuilder` wraps `EthereumPayloadBuilder` with POA signing
+- [x] **A6** - `BlockSealer` wired into payload pipeline via `PoaPayloadBuilder.sign_payload()`
+- [~] **#7** - Keys loadable from env/CLI, but dev keys still hardcoded, no encrypted keystore
 
-### NOT Fixed
-- [ ] **A4** - No custom `PoaPayloadBuilder` - blocks produced unsigned
-- [ ] **A6** - `BlockSealer` exists but not wired into payload pipeline
+### Recently Completed
+- [x] `PoaPayloadBuilder` — signs blocks, sets difficulty 1/2, embeds signer list at epoch
+- [x] CLI flags: `--gas-limit`, `--eager-mining`
+- [x] Governance contracts in genesis: ChainConfig, SignerRegistry, Treasury
+- [x] Gnosis Safe contracts in genesis: Singleton, Proxy Factory, Fallback Handler, MultiSend
+- [x] `meow_*` RPC namespace: chainConfig, signers, nodeInfo
+- [x] 80 unit tests passing
 
-## What's NOT Done (Major Gap)
+## What's NOT Done (Remaining Gaps)
 
-**Block Signing in Pipeline** - The single biggest gap. Blocks are produced by Reth's default `EthereumPayloadBuilder` without POA signatures. Need a custom `PoaPayloadBuilder` that: signs blocks, sets difficulty 1/2, embeds signer list at epoch blocks.
+1. **Performance Engineering** (MegaETH-inspired) - See Remaining.md Section 12:
+   - Sub-second block production (target: 1s, stretch: 100ms)
+   - Parallel EVM via grevm integration (target: 5K-10K TPS)
+   - High gas limits (100M-1B via on-chain ChainConfig)
+   - In-memory hot state cache
+   - JIT compilation (revmc)
+
+2. **Node ↔ Contract Integration** - Node doesn't yet read ChainConfig/SignerRegistry at runtime:
+   - PoaPayloadBuilder should read gas limit from ChainConfig contract
+   - PoaConsensus should read signer list from SignerRegistry contract
+   - Governance Safe needs to be deployed as a proxy (currently just address reserved)
+   - Timelock for sensitive parameter changes
 
 ## Chain Configuration
 
-| Parameter | Dev Mode | Production |
-|-----------|----------|------------|
-| Chain ID | 9323310 | 9323310 |
-| Block Time | 2s | 12s |
-| Gas Limit | 30M | 60M |
-| Signers | 3 (first 3 dev accounts) | 5 (first 5 dev accounts) |
-| Epoch | 30,000 blocks | 30,000 blocks |
-| Prefunded | 20 accounts @ 10K ETH | 8 accounts (tiered) |
-| Coinbase | EIP-1967 Miner Proxy | EIP-1967 Miner Proxy |
+| Parameter | Dev Mode | Production | Target (MegaETH-inspired) |
+|-----------|----------|------------|---------------------------|
+| Chain ID | 9323310 | 9323310 | 9323310 |
+| Block Time | 2s | 12s | 1s (100ms stretch) |
+| Gas Limit | 30M | 60M | 300M-1B (configurable) |
+| Max Contract Size | 24KB | 24KB | 512KB (configurable) |
+| Signers | 3 (first 3 dev accounts) | 5 (first 5 dev accounts) | 5-21 (via SignerRegistry) |
+| Epoch | 30,000 blocks | 30,000 blocks | 30,000 blocks |
+| Prefunded | 20 accounts @ 10K ETH | 8 accounts (tiered) | Governed by Treasury |
+| Coinbase | EIP-1967 Miner Proxy | EIP-1967 Miner Proxy | → Treasury contract |
+| Mining Mode | Interval (2s) | Interval (12s) | Eager (tx-triggered) |
+| EVM Execution | Sequential | Sequential | Parallel (grevm) |
+| Governance | Hardcoded | Hardcoded | Gnosis Safe multisig |
 
 ## Genesis Pre-deployed Contracts
 
@@ -104,6 +145,14 @@ alloy_consensus::BlockHeader           // Use this for header method access (gas
 | Multicall3 | `0xcA11bde05977b3631167028862bE2a173976CA11` | Infra |
 | CREATE2 Deployer | `0x4e59b44847b379578588920cA78FbF26c0B4956C` | Infra |
 | SimpleAccountFactory | `0x9406Cc6185a346906296840746125a0E44976454` | Infra |
+| ChainConfig | `0x00000000000000000000000000000000C04F1600` | Governance |
+| SignerRegistry | `0x000000000000000000000000000000005164EB00` | Governance |
+| Treasury | `0x0000000000000000000000000000000007EA5B00` | Governance |
+| Governance Safe (reserved) | `0x000000000000000000000000000000006F5AFE00` | Governance |
+| Safe Singleton v1.3.0 | `0xd9Db270c1B5E3Bd161E8c8503c55cEABeE709552` | Gnosis Safe |
+| Safe Proxy Factory | `0xa6B71E26C5e0845f74c812102Ca7114b6a896AB2` | Gnosis Safe |
+| Safe Fallback Handler | `0xf48f2B2d2a534e402487b3ee7C18c33Aec0Fe5e4` | Gnosis Safe |
+| Safe MultiSend | `0xA238CBeb142c10Ef7Ad8442C6D1f9E89e07e7761` | Gnosis Safe |
 
 ## Building & Running
 
@@ -135,7 +184,7 @@ just docker
 
 ## Development Notes
 
-- 70 unit tests: `just test` (or `cargo test`)
+- 80 unit tests: `just test` (or `cargo test`)
 - Consensus traits use `#[auto_impl::auto_impl(&, Arc)]` - `Arc<PoaConsensus>` auto-implements traits
 - `launch_with_debug_capabilities()` requires `DebugNode` impl (in node.rs)
 - Dev mode: auto-mines blocks, relaxed consensus (no signature checks)
@@ -150,3 +199,13 @@ just docker
 - `launch()` vs `launch_with_debug_capabilities()` - debug version needed for dev mining
 - `TaskManager` is now internal in latest reth - use `TaskExecutor::with_existing_handle(Handle::current())`
 - `HeaderValidator<Header>` uses concrete type - `Consensus<B>` needs `where PoaConsensus: HeaderValidator<B::Header>`
+
+## Performance Roadmap
+
+See `Remaining.md` for full details (Sections 12-15). Key remaining phases:
+
+1. **Phase 2** - Performance: 1s blocks, 300M gas limit, parallel EVM (grevm)
+2. **Phase 3** - Node ↔ Contract Integration: Read ChainConfig/SignerRegistry at runtime
+3. **Phase 5** - Advanced: In-memory state, JIT compilation, state-diff streaming, sub-100ms blocks
+
+Target: **1-second blocks, 5K-10K TPS, full on-chain governance** (vs MegaETH's 10ms/100K TPS but single sequencer)

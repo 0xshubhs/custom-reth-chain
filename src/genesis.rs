@@ -475,6 +475,311 @@ fn erc4337_contract_alloc() -> BTreeMap<Address, GenesisAccount> {
     contracts
 }
 
+// =============================================================================
+// Governance contracts — deployed at genesis, controlled by governance Safe
+// =============================================================================
+
+/// ChainConfig contract address (deterministic, pre-assigned)
+pub const CHAIN_CONFIG_ADDRESS: Address = address!("00000000000000000000000000000000C04F1600");
+
+/// SignerRegistry contract address (deterministic, pre-assigned)
+pub const SIGNER_REGISTRY_ADDRESS: Address = address!("000000000000000000000000000000005164EB00");
+
+/// Treasury contract address (deterministic, pre-assigned)
+pub const TREASURY_ADDRESS: Address = address!("0000000000000000000000000000000007EA5B00");
+
+/// Governance Safe address (the multisig that controls all governance contracts).
+/// In dev mode this is just the first dev account; in production it would be a
+/// deployed Gnosis Safe proxy.
+pub const GOVERNANCE_SAFE_ADDRESS: Address = address!("000000000000000000000000000000006F5AFE00");
+
+/// Returns governance contract allocs for genesis.
+///
+/// Deploys ChainConfig, SignerRegistry, and Treasury contracts with initial
+/// storage slots pre-populated to match constructor arguments.
+///
+/// Storage layout reference (Solidity):
+///   - slot 0: governance address
+///   - subsequent slots: contract-specific state
+fn governance_contract_alloc(
+    governance: Address,
+    signers: &[Address],
+    gas_limit: u64,
+    block_time: u64,
+) -> BTreeMap<Address, GenesisAccount> {
+    let mut contracts = BTreeMap::new();
+
+    // --- ChainConfig ---
+    // Storage layout:
+    //   slot 0: governance
+    //   slot 1: gasLimit
+    //   slot 2: blockTime
+    //   slot 3: maxContractSize
+    //   slot 4: calldataGasPerByte
+    //   slot 5: maxTxGas
+    //   slot 6: eagerMining (bool)
+    {
+        let mut storage = BTreeMap::new();
+        // slot 0: governance
+        let mut gov_slot = [0u8; 32];
+        gov_slot[12..32].copy_from_slice(governance.as_slice());
+        storage.insert(B256::ZERO, B256::from(gov_slot));
+
+        // slot 1: gasLimit
+        storage.insert(
+            b256!("0000000000000000000000000000000000000000000000000000000000000001"),
+            B256::from(U256::from(gas_limit).to_be_bytes()),
+        );
+        // slot 2: blockTime
+        storage.insert(
+            b256!("0000000000000000000000000000000000000000000000000000000000000002"),
+            B256::from(U256::from(block_time).to_be_bytes()),
+        );
+        // slot 3: maxContractSize = 24576
+        storage.insert(
+            b256!("0000000000000000000000000000000000000000000000000000000000000003"),
+            B256::from(U256::from(24576u64).to_be_bytes()),
+        );
+        // slot 4: calldataGasPerByte = 16
+        storage.insert(
+            b256!("0000000000000000000000000000000000000000000000000000000000000004"),
+            B256::from(U256::from(16u64).to_be_bytes()),
+        );
+        // slot 5: maxTxGas = gasLimit
+        storage.insert(
+            b256!("0000000000000000000000000000000000000000000000000000000000000005"),
+            B256::from(U256::from(gas_limit).to_be_bytes()),
+        );
+        // slot 6: eagerMining = false (0)
+
+        contracts.insert(
+            CHAIN_CONFIG_ADDRESS,
+            GenesisAccount {
+                balance: U256::ZERO,
+                nonce: Some(1),
+                code: Some(Bytes::from_static(include_bytes!("bytecodes/chain_config.bin"))),
+                storage: Some(storage),
+                private_key: None,
+            },
+        );
+    }
+
+    // --- SignerRegistry ---
+    // Storage layout:
+    //   slot 0: governance
+    //   slot 1: signers.length (dynamic array)
+    //   slot 2: isSigner mapping (mapping, individual slots)
+    //   slot 3: signerThreshold
+    //   keccak256(1): signers[0], signers[1], ... (dynamic array data)
+    {
+        use alloy_primitives::Keccak256;
+
+        let mut storage = BTreeMap::new();
+        // slot 0: governance
+        let mut gov_slot = [0u8; 32];
+        gov_slot[12..32].copy_from_slice(governance.as_slice());
+        storage.insert(B256::ZERO, B256::from(gov_slot));
+
+        // slot 1: signers.length
+        storage.insert(
+            b256!("0000000000000000000000000000000000000000000000000000000000000001"),
+            B256::from(U256::from(signers.len()).to_be_bytes()),
+        );
+
+        // Dynamic array data: keccak256(slot_1) + index
+        let mut hasher = Keccak256::new();
+        hasher.update(B256::from(U256::from(1u64).to_be_bytes()).as_slice());
+        let array_base = U256::from_be_bytes(hasher.finalize().0);
+
+        for (i, signer) in signers.iter().enumerate() {
+            let slot = array_base + U256::from(i);
+            let mut addr_slot = [0u8; 32];
+            addr_slot[12..32].copy_from_slice(signer.as_slice());
+            storage.insert(B256::from(slot.to_be_bytes()), B256::from(addr_slot));
+        }
+
+        // slot 2: isSigner mapping — keccak256(address . slot_2)
+        for signer in signers {
+            let mut hasher = Keccak256::new();
+            let mut key_padded = [0u8; 32];
+            key_padded[12..32].copy_from_slice(signer.as_slice());
+            hasher.update(&key_padded);
+            hasher.update(B256::from(U256::from(2u64).to_be_bytes()).as_slice());
+            let mapping_slot = hasher.finalize();
+            storage.insert(mapping_slot, B256::from(U256::from(1u64).to_be_bytes()));
+        }
+
+        // slot 3: signerThreshold = (signers.len() / 2 + 1) for majority
+        let threshold = signers.len() / 2 + 1;
+        storage.insert(
+            b256!("0000000000000000000000000000000000000000000000000000000000000003"),
+            B256::from(U256::from(threshold).to_be_bytes()),
+        );
+
+        contracts.insert(
+            SIGNER_REGISTRY_ADDRESS,
+            GenesisAccount {
+                balance: U256::ZERO,
+                nonce: Some(1),
+                code: Some(Bytes::from_static(include_bytes!("bytecodes/signer_registry.bin"))),
+                storage: Some(storage),
+                private_key: None,
+            },
+        );
+    }
+
+    // --- Treasury ---
+    // Storage layout:
+    //   slot 0: governance
+    //   slot 1: signerShare = 4000
+    //   slot 2: devShare = 3000
+    //   slot 3: communityShare = 2000
+    //   slot 4: burnShare = 1000
+    //   slot 5: devFund
+    //   slot 6: communityFund
+    //   slot 7: signerRegistry
+    {
+        let mut storage = BTreeMap::new();
+        // slot 0: governance
+        let mut gov_slot = [0u8; 32];
+        gov_slot[12..32].copy_from_slice(governance.as_slice());
+        storage.insert(B256::ZERO, B256::from(gov_slot));
+
+        // slot 1: signerShare = 4000
+        storage.insert(
+            b256!("0000000000000000000000000000000000000000000000000000000000000001"),
+            B256::from(U256::from(4000u64).to_be_bytes()),
+        );
+        // slot 2: devShare = 3000
+        storage.insert(
+            b256!("0000000000000000000000000000000000000000000000000000000000000002"),
+            B256::from(U256::from(3000u64).to_be_bytes()),
+        );
+        // slot 3: communityShare = 2000
+        storage.insert(
+            b256!("0000000000000000000000000000000000000000000000000000000000000003"),
+            B256::from(U256::from(2000u64).to_be_bytes()),
+        );
+        // slot 4: burnShare = 1000
+        storage.insert(
+            b256!("0000000000000000000000000000000000000000000000000000000000000004"),
+            B256::from(U256::from(1000u64).to_be_bytes()),
+        );
+        // slot 5: devFund = dev_accounts()[5] (treasury account in production)
+        let dev_fund = dev_accounts()[5];
+        let mut dev_fund_slot = [0u8; 32];
+        dev_fund_slot[12..32].copy_from_slice(dev_fund.as_slice());
+        storage.insert(
+            b256!("0000000000000000000000000000000000000000000000000000000000000005"),
+            B256::from(dev_fund_slot),
+        );
+        // slot 6: communityFund = dev_accounts()[7] (community account)
+        let community_fund = dev_accounts()[7];
+        let mut community_fund_slot = [0u8; 32];
+        community_fund_slot[12..32].copy_from_slice(community_fund.as_slice());
+        storage.insert(
+            b256!("0000000000000000000000000000000000000000000000000000000000000006"),
+            B256::from(community_fund_slot),
+        );
+        // slot 7: signerRegistry
+        let mut sr_slot = [0u8; 32];
+        sr_slot[12..32].copy_from_slice(SIGNER_REGISTRY_ADDRESS.as_slice());
+        storage.insert(
+            b256!("0000000000000000000000000000000000000000000000000000000000000007"),
+            B256::from(sr_slot),
+        );
+
+        contracts.insert(
+            TREASURY_ADDRESS,
+            GenesisAccount {
+                balance: U256::ZERO,
+                nonce: Some(1),
+                code: Some(Bytes::from_static(include_bytes!("bytecodes/treasury.bin"))),
+                storage: Some(storage),
+                private_key: None,
+            },
+        );
+    }
+
+    contracts
+}
+
+// =============================================================================
+// Gnosis Safe contracts — canonical deployments for multisig governance
+// =============================================================================
+
+/// Gnosis Safe Singleton v1.3.0 canonical address
+pub const SAFE_SINGLETON_ADDRESS: Address =
+    address!("d9Db270c1B5E3Bd161E8c8503c55cEABeE709552");
+
+/// Gnosis Safe Proxy Factory canonical address
+pub const SAFE_PROXY_FACTORY_ADDRESS: Address =
+    address!("a6B71E26C5e0845f74c812102Ca7114b6a896AB2");
+
+/// Gnosis Safe Compatibility Fallback Handler canonical address
+pub const SAFE_FALLBACK_HANDLER_ADDRESS: Address =
+    address!("f48f2B2d2a534e402487b3ee7C18c33Aec0Fe5e4");
+
+/// Gnosis Safe MultiSend canonical address
+pub const SAFE_MULTISEND_ADDRESS: Address =
+    address!("A238CBeb142c10Ef7Ad8442C6D1f9E89e07e7761");
+
+/// Returns Gnosis Safe contract allocs for genesis.
+/// Deploys the 4 core Safe contracts at their canonical addresses.
+fn safe_contract_alloc() -> BTreeMap<Address, GenesisAccount> {
+    let mut contracts = BTreeMap::new();
+
+    // Safe Singleton v1.3.0
+    contracts.insert(
+        SAFE_SINGLETON_ADDRESS,
+        GenesisAccount {
+            balance: U256::ZERO,
+            nonce: Some(1),
+            code: Some(Bytes::from_static(include_bytes!("bytecodes/safe_singleton.bin"))),
+            storage: None,
+            private_key: None,
+        },
+    );
+
+    // Safe Proxy Factory
+    contracts.insert(
+        SAFE_PROXY_FACTORY_ADDRESS,
+        GenesisAccount {
+            balance: U256::ZERO,
+            nonce: Some(1),
+            code: Some(Bytes::from_static(include_bytes!("bytecodes/safe_proxy_factory.bin"))),
+            storage: None,
+            private_key: None,
+        },
+    );
+
+    // Compatibility Fallback Handler
+    contracts.insert(
+        SAFE_FALLBACK_HANDLER_ADDRESS,
+        GenesisAccount {
+            balance: U256::ZERO,
+            nonce: Some(1),
+            code: Some(Bytes::from_static(include_bytes!("bytecodes/safe_fallback_handler.bin"))),
+            storage: None,
+            private_key: None,
+        },
+    );
+
+    // MultiSend
+    contracts.insert(
+        SAFE_MULTISEND_ADDRESS,
+        GenesisAccount {
+            balance: U256::ZERO,
+            nonce: Some(1),
+            code: Some(Bytes::from_static(include_bytes!("bytecodes/safe_multisend.bin"))),
+            storage: None,
+            private_key: None,
+        },
+    );
+
+    contracts
+}
+
 /// Create a genesis configuration from the config
 pub fn create_genesis(config: GenesisConfig) -> Genesis {
     // Build the extra data field for POA:
@@ -508,9 +813,20 @@ pub fn create_genesis(config: GenesisConfig) -> Genesis {
     alloc.extend(erc4337_contract_alloc());
 
     // Add EIP-1967 Miner Proxy for anonymous block reward collection
-    // Admin is set to the first signer (or zero address if no signers)
-    let proxy_admin = config.signers.first().copied().unwrap_or(Address::ZERO);
-    alloc.extend(miner_proxy_alloc(proxy_admin));
+    // Admin is set to the governance Safe address
+    alloc.extend(miner_proxy_alloc(GOVERNANCE_SAFE_ADDRESS));
+
+    // Add governance contracts (ChainConfig, SignerRegistry, Treasury)
+    // Governance is set to the governance Safe address
+    alloc.extend(governance_contract_alloc(
+        GOVERNANCE_SAFE_ADDRESS,
+        &config.signers,
+        config.gas_limit,
+        config.block_period,
+    ));
+
+    // Add Gnosis Safe contracts for multisig governance
+    alloc.extend(safe_contract_alloc());
 
     // Build the chain config JSON
     let chain_config = serde_json::json!({
@@ -579,7 +895,7 @@ mod tests {
 
         // Verify accounts are prefunded
         assert!(!genesis.alloc.is_empty());
-        assert_eq!(genesis.alloc.len(), 30); // 20 dev accounts + 4 system contracts + 5 ERC-4337/infra + 1 miner proxy
+        assert_eq!(genesis.alloc.len(), 37); // 20 dev accounts + 4 system contracts + 5 ERC-4337/infra + 1 miner proxy + 3 governance + 4 Safe
 
         // Verify extra data contains signers
         assert!(genesis.extra_data.len() >= 32 + 65); // At least vanity + seal
@@ -593,8 +909,8 @@ mod tests {
         // Verify production chain ID
         assert_eq!(genesis.config.chain_id, 9323310);
 
-        // Verify: 8 prefunded accounts (5 signers + treasury + ops + community) + 4 system contracts + 5 ERC-4337/infra + 1 miner proxy
-        assert_eq!(genesis.alloc.len(), 18);
+        // Verify: 8 prefunded accounts (5 signers + treasury + ops + community) + 4 system contracts + 5 ERC-4337/infra + 1 miner proxy + 3 governance + 4 Safe
+        assert_eq!(genesis.alloc.len(), 25);
 
         // Verify gas limit is 60M
         assert_eq!(genesis.gas_limit, 60_000_000);
@@ -823,6 +1139,284 @@ mod tests {
                 .alloc
                 .contains_key(&address!("9406Cc6185a346906296840746125a0E44976454")),
             "SimpleAccountFactory must be in genesis"
+        );
+    }
+
+    #[test]
+    fn test_governance_contracts_in_genesis() {
+        let genesis = create_dev_genesis();
+
+        // ChainConfig contract
+        let chain_config = genesis.alloc.get(&CHAIN_CONFIG_ADDRESS);
+        assert!(chain_config.is_some(), "ChainConfig must be in genesis");
+        let chain_config = chain_config.unwrap();
+        assert!(chain_config.code.is_some(), "ChainConfig must have code");
+        assert_eq!(chain_config.nonce, Some(1));
+        assert!(chain_config.storage.is_some(), "ChainConfig must have storage");
+        let storage = chain_config.storage.as_ref().unwrap();
+        // Should have slots for governance, gasLimit, blockTime, maxContractSize, calldataGasPerByte, maxTxGas
+        assert!(storage.len() >= 6, "ChainConfig needs at least 6 storage slots");
+
+        // SignerRegistry contract
+        let signer_registry = genesis.alloc.get(&SIGNER_REGISTRY_ADDRESS);
+        assert!(signer_registry.is_some(), "SignerRegistry must be in genesis");
+        let signer_registry = signer_registry.unwrap();
+        assert!(signer_registry.code.is_some(), "SignerRegistry must have code");
+        assert_eq!(signer_registry.nonce, Some(1));
+        assert!(signer_registry.storage.is_some(), "SignerRegistry must have storage");
+        let storage = signer_registry.storage.as_ref().unwrap();
+        // governance + signers.length + 3 signer array entries + 3 isSigner mapping entries + threshold
+        assert!(storage.len() >= 8, "SignerRegistry needs at least 8 storage slots (got {})", storage.len());
+
+        // Treasury contract
+        let treasury = genesis.alloc.get(&TREASURY_ADDRESS);
+        assert!(treasury.is_some(), "Treasury must be in genesis");
+        let treasury = treasury.unwrap();
+        assert!(treasury.code.is_some(), "Treasury must have code");
+        assert_eq!(treasury.nonce, Some(1));
+        assert!(treasury.storage.is_some(), "Treasury must have storage");
+        let storage = treasury.storage.as_ref().unwrap();
+        // governance + signerShare + devShare + communityShare + burnShare + devFund + communityFund + signerRegistry
+        assert_eq!(storage.len(), 8, "Treasury needs 8 storage slots");
+    }
+
+    #[test]
+    fn test_safe_contracts_in_genesis() {
+        let genesis = create_dev_genesis();
+
+        // Safe Singleton
+        let singleton = genesis.alloc.get(&SAFE_SINGLETON_ADDRESS);
+        assert!(singleton.is_some(), "Safe Singleton must be in genesis");
+        assert!(singleton.unwrap().code.is_some(), "Safe Singleton must have code");
+        assert_eq!(singleton.unwrap().nonce, Some(1));
+
+        // Safe Proxy Factory
+        let factory = genesis.alloc.get(&SAFE_PROXY_FACTORY_ADDRESS);
+        assert!(factory.is_some(), "Safe Proxy Factory must be in genesis");
+        assert!(factory.unwrap().code.is_some(), "Safe Proxy Factory must have code");
+
+        // Safe Fallback Handler
+        let handler = genesis.alloc.get(&SAFE_FALLBACK_HANDLER_ADDRESS);
+        assert!(handler.is_some(), "Safe Fallback Handler must be in genesis");
+        assert!(handler.unwrap().code.is_some(), "Safe Fallback Handler must have code");
+
+        // Safe MultiSend
+        let multisend = genesis.alloc.get(&SAFE_MULTISEND_ADDRESS);
+        assert!(multisend.is_some(), "Safe MultiSend must be in genesis");
+        assert!(multisend.unwrap().code.is_some(), "Safe MultiSend must have code");
+    }
+
+    #[test]
+    fn test_governance_safe_is_admin() {
+        let genesis = create_dev_genesis();
+
+        // Miner proxy admin should be the governance Safe address
+        let proxy = genesis.alloc.get(&MINER_PROXY_ADDRESS).unwrap();
+        let storage = proxy.storage.as_ref().unwrap();
+        let admin_slot = storage.get(&EIP1967_ADMIN_SLOT).unwrap();
+        let mut expected = [0u8; 32];
+        expected[12..32].copy_from_slice(GOVERNANCE_SAFE_ADDRESS.as_slice());
+        assert_eq!(*admin_slot, B256::from(expected), "Miner proxy admin should be governance Safe");
+    }
+
+    // =========================================================================
+    // New comprehensive tests
+    // =========================================================================
+
+    #[test]
+    fn test_governance_contract_storage_values() {
+        let genesis = create_dev_genesis();
+
+        // --- ChainConfig storage verification ---
+        let chain_config = genesis.alloc.get(&CHAIN_CONFIG_ADDRESS).unwrap();
+        let storage = chain_config.storage.as_ref().unwrap();
+
+        // slot 0: governance = GOVERNANCE_SAFE_ADDRESS
+        let mut expected_gov = [0u8; 32];
+        expected_gov[12..32].copy_from_slice(GOVERNANCE_SAFE_ADDRESS.as_slice());
+        assert_eq!(
+            *storage.get(&B256::ZERO).unwrap(),
+            B256::from(expected_gov),
+            "ChainConfig slot 0 should be governance Safe address"
+        );
+
+        // slot 1: gasLimit = 30_000_000
+        let slot1 = b256!("0000000000000000000000000000000000000000000000000000000000000001");
+        assert_eq!(
+            *storage.get(&slot1).unwrap(),
+            B256::from(U256::from(30_000_000u64).to_be_bytes()),
+            "ChainConfig slot 1 should be gas limit 30M"
+        );
+
+        // slot 2: blockTime = 2
+        let slot2 = b256!("0000000000000000000000000000000000000000000000000000000000000002");
+        assert_eq!(
+            *storage.get(&slot2).unwrap(),
+            B256::from(U256::from(2u64).to_be_bytes()),
+            "ChainConfig slot 2 should be block time 2"
+        );
+
+        // --- SignerRegistry storage verification ---
+        let signer_registry = genesis.alloc.get(&SIGNER_REGISTRY_ADDRESS).unwrap();
+        let storage = signer_registry.storage.as_ref().unwrap();
+
+        // slot 0: governance
+        assert_eq!(
+            *storage.get(&B256::ZERO).unwrap(),
+            B256::from(expected_gov),
+            "SignerRegistry slot 0 should be governance Safe address"
+        );
+
+        // slot 1: signers.length = 3
+        let slot1 = b256!("0000000000000000000000000000000000000000000000000000000000000001");
+        assert_eq!(
+            *storage.get(&slot1).unwrap(),
+            B256::from(U256::from(3u64).to_be_bytes()),
+            "SignerRegistry slot 1 (signers.length) should be 3"
+        );
+
+        // --- Treasury storage verification ---
+        let treasury = genesis.alloc.get(&TREASURY_ADDRESS).unwrap();
+        let storage = treasury.storage.as_ref().unwrap();
+
+        // slot 0: governance
+        assert_eq!(
+            *storage.get(&B256::ZERO).unwrap(),
+            B256::from(expected_gov),
+            "Treasury slot 0 should be governance Safe address"
+        );
+
+        // slot 1: signerShare = 4000
+        assert_eq!(
+            *storage.get(&slot1).unwrap(),
+            B256::from(U256::from(4000u64).to_be_bytes()),
+            "Treasury slot 1 (signerShare) should be 4000"
+        );
+    }
+
+    #[test]
+    fn test_all_contract_bytecodes_non_empty() {
+        let genesis = create_dev_genesis();
+
+        for (address, account) in &genesis.alloc {
+            if let Some(code) = &account.code {
+                assert!(
+                    !code.is_empty(),
+                    "Contract at {} has empty bytecode",
+                    address
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_genesis_with_custom_gas_limit() {
+        let mut config = GenesisConfig::dev();
+        config.gas_limit = 100_000_000;
+        let genesis = create_genesis(config);
+        assert_eq!(genesis.gas_limit, 100_000_000);
+    }
+
+    #[test]
+    fn test_all_dev_accounts_prefunded() {
+        let genesis = create_dev_genesis();
+        let accounts = dev_accounts();
+        let expected_balance = default_prefund_balance();
+
+        for account in &accounts {
+            let alloc = genesis.alloc.get(account);
+            assert!(alloc.is_some(), "Dev account {} should be in genesis", account);
+            assert_eq!(
+                alloc.unwrap().balance, expected_balance,
+                "Dev account {} should have 10,000 ETH",
+                account
+            );
+        }
+    }
+
+    #[test]
+    fn test_production_accounts_tiered_funding() {
+        let config = GenesisConfig::production();
+        let genesis = create_genesis(config);
+
+        let eth = U256::from(10u64).pow(U256::from(18u64));
+
+        // First 5 accounts are signers with 10,000 ETH each
+        let signer_balance = U256::from(10_000u64) * eth;
+        for account in dev_accounts().iter().take(5) {
+            let alloc = genesis.alloc.get(account).unwrap();
+            assert_eq!(alloc.balance, signer_balance, "Signer {} should have 10,000 ETH", account);
+        }
+
+        // Account 5 (treasury): 2,500,000 ETH
+        let treasury_balance = U256::from(2_500_000u64) * eth;
+        assert_eq!(genesis.alloc.get(&dev_accounts()[5]).unwrap().balance, treasury_balance);
+
+        // Account 6 (operations): 500,000 ETH
+        let operations_balance = U256::from(500_000u64) * eth;
+        assert_eq!(genesis.alloc.get(&dev_accounts()[6]).unwrap().balance, operations_balance);
+
+        // Account 7 (community): 100,000 ETH
+        let community_balance = U256::from(100_000u64) * eth;
+        assert_eq!(genesis.alloc.get(&dev_accounts()[7]).unwrap().balance, community_balance);
+    }
+
+    #[test]
+    fn test_dev_genesis_alloc_breakdown() {
+        let genesis = create_dev_genesis();
+
+        // Count categories
+        let dev_count = dev_accounts().len(); // 20
+        let system_contracts = 4; // EIP-4788, 2935, 7002, 7251
+        let infra_contracts = 5; // EntryPoint, WETH9, Multicall3, CREATE2, SimpleAccountFactory
+        let miner_proxy = 1;
+        let governance = 3; // ChainConfig, SignerRegistry, Treasury
+        let safe = 4; // Singleton, ProxyFactory, FallbackHandler, MultiSend
+
+        let expected = dev_count + system_contracts + infra_contracts + miner_proxy + governance + safe;
+        assert_eq!(expected, 37);
+        assert_eq!(genesis.alloc.len(), expected);
+    }
+
+    #[test]
+    fn test_all_contract_addresses_unique() {
+        use std::collections::HashSet;
+        let genesis = create_dev_genesis();
+
+        let addresses: Vec<Address> = genesis.alloc.keys().copied().collect();
+        let unique: HashSet<_> = addresses.iter().collect();
+
+        assert_eq!(
+            addresses.len(),
+            unique.len(),
+            "All genesis alloc addresses should be unique"
+        );
+    }
+
+    #[test]
+    fn test_genesis_coinbase_is_miner_proxy() {
+        let genesis = create_dev_genesis();
+        assert_eq!(genesis.coinbase, MINER_PROXY_ADDRESS);
+
+        let prod_genesis = create_genesis(GenesisConfig::production());
+        assert_eq!(prod_genesis.coinbase, MINER_PROXY_ADDRESS);
+    }
+
+    #[test]
+    fn test_genesis_with_zero_signers() {
+        let config = GenesisConfig::default().with_signers(vec![]);
+        let genesis = create_genesis(config);
+
+        // Extra data with 0 signers: 32 vanity + 0 * 20 + 65 seal = 97 bytes
+        assert_eq!(genesis.extra_data.len(), 97);
+    }
+
+    #[test]
+    fn test_governance_safe_address_constant() {
+        // Verify the governance Safe address matches expected value
+        assert_eq!(
+            format!("{:?}", GOVERNANCE_SAFE_ADDRESS),
+            "0x000000000000000000000000000000006f5afe00"
         );
     }
 }

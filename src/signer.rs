@@ -429,4 +429,177 @@ mod tests {
         // Can't check async easily in sync test, but at least it shouldn't panic
         drop(manager);
     }
+
+    #[tokio::test]
+    async fn test_concurrent_sign_operations() {
+        let manager = Arc::new(SignerManager::new());
+        let address = manager
+            .add_signer_from_hex(dev::DEV_PRIVATE_KEYS[0])
+            .await
+            .unwrap();
+
+        let mut handles = vec![];
+        for i in 0..10u64 {
+            let mgr = manager.clone();
+            let addr = address;
+            handles.push(tokio::spawn(async move {
+                let hash = keccak256(i.to_be_bytes());
+                mgr.sign_hash(&addr, hash).await.unwrap()
+            }));
+        }
+
+        let mut results = Vec::new();
+        for handle in handles {
+            results.push(handle.await.unwrap());
+        }
+
+        // All 10 signing operations should succeed
+        assert_eq!(results.len(), 10);
+        // Different inputs should produce different signatures
+        let unique: std::collections::HashSet<_> = results.iter().map(|s| format!("{:?}", s)).collect();
+        assert_eq!(unique.len(), 10);
+    }
+
+    #[tokio::test]
+    async fn test_sign_with_all_dev_signers() {
+        let manager = dev::setup_dev_signers().await;
+        let addresses = manager.signer_addresses().await;
+        let sealer = BlockSealer::new(manager);
+
+        let header = Header {
+            number: 1,
+            gas_limit: 30_000_000,
+            timestamp: 12345,
+            extra_data: vec![0u8; 32 + 65].into(),
+            ..Default::default()
+        };
+
+        let mut signatures = vec![];
+        for addr in &addresses {
+            let signed = sealer.seal_header(header.clone(), addr).await.unwrap();
+            let recovered = BlockSealer::verify_signature(&signed).unwrap();
+            assert_eq!(recovered, *addr, "Recovered address should match signer");
+            signatures.push(signed.extra_data.to_vec());
+        }
+
+        // All 3 signers should produce different signatures
+        assert_ne!(signatures[0], signatures[1]);
+        assert_ne!(signatures[1], signatures[2]);
+        assert_ne!(signatures[0], signatures[2]);
+    }
+
+    #[test]
+    fn test_seal_hash_deterministic() {
+        let header = Header {
+            number: 42,
+            gas_limit: 30_000_000,
+            timestamp: 99999,
+            extra_data: vec![0u8; 32 + 65].into(),
+            ..Default::default()
+        };
+
+        let hash1 = BlockSealer::seal_hash(&header);
+        let hash2 = BlockSealer::seal_hash(&header);
+        let hash3 = BlockSealer::seal_hash(&header);
+
+        assert_eq!(hash1, hash2);
+        assert_eq!(hash2, hash3);
+    }
+
+    #[test]
+    fn test_sign_different_headers_different_hashes() {
+        let header1 = Header {
+            number: 1,
+            extra_data: vec![0u8; 32 + 65].into(),
+            ..Default::default()
+        };
+        let header2 = Header {
+            number: 2,
+            extra_data: vec![0u8; 32 + 65].into(),
+            ..Default::default()
+        };
+        let header3 = Header {
+            number: 3,
+            extra_data: vec![0u8; 32 + 65].into(),
+            ..Default::default()
+        };
+
+        let hash1 = BlockSealer::seal_hash(&header1);
+        let hash2 = BlockSealer::seal_hash(&header2);
+        let hash3 = BlockSealer::seal_hash(&header3);
+
+        assert_ne!(hash1, hash2);
+        assert_ne!(hash2, hash3);
+        assert_ne!(hash1, hash3);
+    }
+
+    #[tokio::test]
+    async fn test_add_all_ten_dev_keys() {
+        let manager = SignerManager::new();
+        let mut addresses = vec![];
+
+        for key in dev::DEV_PRIVATE_KEYS.iter() {
+            let addr = manager.add_signer_from_hex(key).await.unwrap();
+            addresses.push(addr);
+        }
+
+        assert_eq!(addresses.len(), 10);
+        assert_eq!(manager.signer_addresses().await.len(), 10);
+
+        // All addresses should be unique
+        let unique: std::collections::HashSet<_> = addresses.iter().collect();
+        assert_eq!(unique.len(), 10);
+    }
+
+    #[tokio::test]
+    async fn test_remove_and_re_add_signer() {
+        let manager = SignerManager::new();
+        let address = manager
+            .add_signer_from_hex(dev::DEV_PRIVATE_KEYS[0])
+            .await
+            .unwrap();
+
+        assert!(manager.has_signer(&address).await);
+        assert!(manager.remove_signer(&address).await);
+        assert!(!manager.has_signer(&address).await);
+
+        // Re-add the same key
+        let re_added = manager
+            .add_signer_from_hex(dev::DEV_PRIVATE_KEYS[0])
+            .await
+            .unwrap();
+        assert_eq!(address, re_added);
+        assert!(manager.has_signer(&address).await);
+    }
+
+    #[tokio::test]
+    async fn test_sign_after_remove_fails() {
+        let manager = SignerManager::new();
+        let address = manager
+            .add_signer_from_hex(dev::DEV_PRIVATE_KEYS[0])
+            .await
+            .unwrap();
+
+        // Sign should work
+        let hash = B256::ZERO;
+        assert!(manager.sign_hash(&address, hash).await.is_ok());
+
+        // Remove the signer
+        manager.remove_signer(&address).await;
+
+        // Sign should fail after removal
+        let result = manager.sign_hash(&address, hash).await;
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            SignerError::NoSignerForAddress(addr) => assert_eq!(addr, address),
+            other => panic!("Expected NoSignerForAddress, got {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_empty_manager_signer_addresses() {
+        let manager = SignerManager::new();
+        let addresses = manager.signer_addresses().await;
+        assert!(addresses.is_empty());
+    }
 }

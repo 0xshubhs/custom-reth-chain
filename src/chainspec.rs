@@ -397,4 +397,140 @@ mod tests {
         let _latest = chain.latest_fork_id();
         let _filter = chain.fork_filter(head);
     }
+
+    #[test]
+    fn test_dev_vs_production_config_comparison() {
+        // Verify the CLAUDE.md configuration table
+        let dev_chain = PoaChainSpec::dev_chain();
+        assert_eq!(dev_chain.inner().chain.id(), 9323310);
+        assert_eq!(dev_chain.block_period(), 2);
+        assert_eq!(dev_chain.inner().genesis().gas_limit, 30_000_000);
+        assert_eq!(dev_chain.signers().len(), 3);
+        assert_eq!(dev_chain.epoch(), 30000);
+
+        let prod_genesis = crate::genesis::create_genesis(crate::genesis::GenesisConfig::production());
+        let prod_config = PoaConfig {
+            period: 12,
+            epoch: 30000,
+            signers: crate::genesis::dev_accounts().into_iter().take(5).collect(),
+        };
+        let prod_chain = PoaChainSpec::new(prod_genesis, prod_config);
+        assert_eq!(prod_chain.inner().chain.id(), 9323310);
+        assert_eq!(prod_chain.block_period(), 12);
+        assert_eq!(prod_chain.inner().genesis().gas_limit, 60_000_000);
+        assert_eq!(prod_chain.signers().len(), 5);
+        assert_eq!(prod_chain.epoch(), 30000);
+    }
+
+    #[test]
+    fn test_all_dev_signers_authorized() {
+        let chain = PoaChainSpec::dev_chain();
+        let signers = chain.signers();
+        for signer in signers {
+            assert!(
+                chain.is_authorized_signer(signer),
+                "Signer {} should be authorized",
+                signer
+            );
+        }
+    }
+
+    #[test]
+    fn test_single_signer_chain() {
+        let genesis = crate::genesis::create_dev_genesis();
+        let signer: Address = "0x0000000000000000000000000000000000000042".parse().unwrap();
+        let poa_config = PoaConfig {
+            period: 2,
+            epoch: 30000,
+            signers: vec![signer],
+        };
+        let chain = PoaChainSpec::new(genesis, poa_config);
+
+        // Single signer should always be the expected signer
+        for block_num in 0..100u64 {
+            assert_eq!(chain.expected_signer(block_num), Some(&signer));
+        }
+    }
+
+    #[test]
+    fn test_large_signer_set() {
+        let genesis = crate::genesis::create_dev_genesis();
+        let signers: Vec<Address> = (1..=21u64)
+            .map(|i| {
+                let mut bytes = [0u8; 20];
+                bytes[19] = i as u8;
+                Address::from(bytes)
+            })
+            .collect();
+        let poa_config = PoaConfig {
+            period: 2,
+            epoch: 30000,
+            signers: signers.clone(),
+        };
+        let chain = PoaChainSpec::new(genesis, poa_config);
+
+        assert_eq!(chain.signers().len(), 21);
+
+        // Round-robin should wrap at 21
+        for i in 0..21u64 {
+            assert_eq!(chain.expected_signer(i), Some(&signers[i as usize]));
+        }
+        // Block 21 wraps back to signer[0]
+        assert_eq!(chain.expected_signer(21), Some(&signers[0]));
+        assert_eq!(chain.expected_signer(42), Some(&signers[0]));
+    }
+
+    #[test]
+    fn test_custom_chain_parameters() {
+        let genesis = crate::genesis::create_genesis(
+            crate::genesis::GenesisConfig::default().with_chain_id(42),
+        );
+        let poa_config = PoaConfig {
+            period: 5,
+            epoch: 100,
+            signers: vec!["0x0000000000000000000000000000000000000001".parse().unwrap()],
+        };
+        let chain = PoaChainSpec::new(genesis, poa_config);
+
+        assert_eq!(chain.inner().chain.id(), 42);
+        assert_eq!(chain.block_period(), 5);
+        assert_eq!(chain.epoch(), 100);
+        assert_eq!(chain.signers().len(), 1);
+    }
+
+    #[test]
+    fn test_base_fee_params_delegation() {
+        let chain = PoaChainSpec::dev_chain();
+        let params = chain.base_fee_params_at_timestamp(0);
+        let inner_params = chain.inner().base_fee_params_at_timestamp(0);
+        assert_eq!(params, inner_params);
+    }
+
+    #[test]
+    fn test_bootnodes_returns_none() {
+        let chain = PoaChainSpec::dev_chain();
+        assert!(chain.bootnodes().is_none());
+    }
+
+    #[test]
+    fn test_ethereum_fork_activation_all_forks() {
+        let chain = PoaChainSpec::dev_chain();
+
+        // Block-based forks should be active at block 0
+        let frontier = chain.ethereum_fork_activation(EthereumHardfork::Frontier);
+        assert!(frontier.active_at_block(0));
+
+        let london = chain.ethereum_fork_activation(EthereumHardfork::London);
+        assert!(london.active_at_block(0));
+
+        // Timestamp-based forks should be active at timestamp 0
+        let shanghai = chain.ethereum_fork_activation(EthereumHardfork::Shanghai);
+        assert!(shanghai.active_at_timestamp(0));
+
+        let cancun = chain.ethereum_fork_activation(EthereumHardfork::Cancun);
+        assert!(cancun.active_at_timestamp(0));
+
+        let prague = chain.ethereum_fork_activation(EthereumHardfork::Prague);
+        assert!(prague.active_at_timestamp(0));
+    }
 }

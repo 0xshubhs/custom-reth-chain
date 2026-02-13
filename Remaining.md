@@ -16,6 +16,10 @@
 9. [Upcoming Ethereum Upgrades](#9-upcoming-ethereum-upgrades)
 10. [Production Infrastructure Checklist](#10-production-infrastructure-checklist)
 11. [Codebase Issues Found During Audit](#11-codebase-issues-found-during-audit)
+12. [MegaETH-Inspired Performance Engineering](#12-megaeth-inspired-performance-engineering)
+13. [Admin Privileges & Multisig Governance](#13-admin-privileges--multisig-governance)
+14. [Dynamic Chain Parameters](#14-dynamic-chain-parameters)
+15. [Meowchain vs MegaETH vs Ethereum Comparison](#15-meowchain-vs-megaeth-vs-ethereum-comparison)
 
 ---
 
@@ -906,64 +910,6 @@ Deploy:
 
 ---
 
-## Priority Execution Order
-
-```
-Phase 0 - Fix the Foundation:
-  0a. Replace NodeConfig::test() with NodeConfig::default()               -- DONE
-  0b. Replace testing_node_with_datadir() with proper node builder        -- DONE (production NodeBuilder + init_db + MDBX)
-  0c. Create custom PoaNode type that injects PoaConsensus into pipeline  -- DONE (node.rs)
-  0d. Build PoaPayloadBuilder that signs blocks with signer keys          -- NOT DONE (biggest remaining gap)
-  0e. Wire signer.rs into block production (round-robin turn detection)   -- PARTIALLY DONE (monitoring only, not signing)
-  0f. Set difficulty field (1=in-turn, 2=out-of-turn) in produced blocks  -- NOT DONE (requires PoaPayloadBuilder)
-  0g. Embed signer list in extra_data at epoch blocks                     -- NOT DONE (helpers exist, not wired)
-  0h. Verify POA signatures on blocks received from peers                 -- DONE (validate_header calls recover_signer in production)
-  0i. EIP-1967 miner proxy for anonymous block reward collection          -- DONE (coinbase = 0x...1967)
-  -> STATUS: ~70% complete. Node is real, consensus validates signatures, rewards to proxy.
-
-Phase 1 - Make It Connectable:
-  1. Add CLI argument parsing (clap)                                      -- DONE
-  2. Implement `meowchain init --genesis genesis.json` subcommand         -- NOT DONE
-  3. Add external HTTP/WS RPC server                                      -- DONE
-  4. Resolve chain ID inconsistencies (pick ONE: 9323310)                 -- DONE (all fixed including sample-genesis.json)
-  5. Fix pre-existing test failures                                       -- DONE (70 tests passing)
-  6. Generate canonical genesis.json for distribution                     -- DONE (auto-regenerated from code)
-  -> STATUS: ~85% complete.
-
-Phase 2 - Make It Multi-Node:
-  7. Set up 2-3 bootnodes with static enode URLs                          -- NOT DONE
-  8. Test 3-signer network (3 machines, each with one key)                -- NOT DONE
-  9. Implement state sync (full sync from genesis for new joiners)        -- NOT DONE
-  10. Implement fork choice rule (heaviest chain / most in-turn blocks)   -- NOT DONE
-  11. Key management: load signer key from file at runtime                -- DONE (--signer-key / SIGNER_KEY)
-  12. Integration test: multi-node block production + validation          -- NOT DONE
-  -> STATUS: ~15% complete.
-
-Phase 3 - Make It Production:
-  13. Implement signer voting (clique_propose RPC)                        -- NOT DONE
-  14. Add admin/debug/txpool/clique RPC namespaces                        -- NOT DONE
-  15. Add Prometheus metrics + Grafana dashboards                         -- NOT DONE
-  16. Implement chain recovery tooling (export/import blocks, db repair)  -- NOT DONE
-  17. Implement post-execution validation (state root, receipt root)      -- DONE (gas_used, receipt root, logs bloom)
-  18. Set up CI/CD pipeline                                               -- NOT DONE
-  19. Encrypted keystore (EIP-2335 style)                                 -- NOT DONE
-  20. Security audit                                                      -- NOT DONE
-  -> STATUS: ~10% complete.
-
-Phase 4 - Make It Ecosystem:
-  21. Deploy core contracts (WETH, Multicall3, CREATE2, EntryPoint)       -- DONE (pre-deployed in genesis!)
-  22. Full Blockscout integration with contract verification              -- NOT DONE (Scoutup wrapper exists)
-  23. Bridge to Ethereum mainnet                                          -- NOT DONE
-  24. Deploy ERC-8004 registries (AI Agent support)                       -- NOT DONE
-  25. Oracle integration (Chainlink/Pyth)                                 -- NOT DONE
-  26. Faucet + developer docs + SDK                                      -- NOT DONE
-  27. Add Fusaka hardfork support                                         -- NOT DONE
-  28. Wallet integrations (MetaMask, WalletConnect)                       -- UNBLOCKED (RPC exists, needs testing)
-  -> STATUS: ~10% complete.
-```
-
----
-
 ## 11. Codebase Issues Found During Audit
 
 > Issues discovered during the 2026-02-12 code review that need attention.
@@ -997,5 +943,622 @@ Phase 4 - Make It Ecosystem:
 
 ---
 
+---
+
+## 12. MegaETH-Inspired Performance Engineering
+
+> **Goal:** Make Meowchain as close to MegaETH performance as possible while remaining a real, full Ethereum-compatible chain. MegaETH achieves 10ms blocks and 100K+ TPS through specialized hardware and custom EVM. Meowchain can realistically target **1-second blocks, 5K-10K+ TPS** using POA advantages + Reth optimizations.
+
+### 12.1 Why POA Already Has a Head Start
+
+POA eliminates the two biggest bottlenecks in Ethereum performance:
+- **No beacon chain consensus** — zero attestation/committee overhead
+- **No global consensus** — 3-5 known signers coordinate directly
+- **No finality delay** — blocks are final after N/2+1 signers confirm
+- **Configurable everything** — gas limits, block time, contract size limits
+
+### 12.2 Sub-Second Block Production
+
+| Target | Current | What's Needed | Complexity |
+|--------|---------|---------------|------------|
+| **1-second blocks** | 2s (dev), 12s (production) | Change `block_time` CLI arg to `1` | Trivial (already configurable) |
+| **500ms blocks** | — | Set `--block-time 0` + custom 500ms interval in PoaPayloadBuilder | Low |
+| **100ms blocks** | — | Continuous block production, in-memory pending state, no disk flush per block | Medium-High |
+| **10ms blocks** (MegaETH-level) | — | Full MegaETH architecture: streaming EVM, node specialization, in-memory everything | Very High |
+
+**Implementation plan for 1-second blocks:**
+```rust
+// Already supported - just run:
+cargo run --release -- --block-time 1
+
+// For sub-second (500ms), modify DevArgs:
+DevArgs {
+    dev: true,
+    block_time: Some(Duration::from_millis(500)),
+    ..Default::default()
+}
+```
+
+**For 100ms+ blocks (advanced):**
+- [ ] Implement continuous block building (don't wait for interval, build when txs arrive)
+- [ ] Move state updates to in-memory first, flush to MDBX asynchronously
+- [ ] Pipeline: receive tx → execute → build block → sign → broadcast (all overlapping)
+- [ ] Use Reth's `--builder.gaslimit` to raise per-block gas independently of block time
+
+### 12.3 Parallel EVM Execution
+
+> MegaETH uses a custom parallel EVM. Reth has foundations for this via `reth-evm` and there are proven forks (Gravity Reth: 41K TPS, 1.5 Gigagas/s) using DAG-based optimistic parallelism.
+
+| Approach | Description | TPS Impact | Complexity |
+|----------|-------------|------------|------------|
+| **Optimistic parallel execution** | Execute all txs in parallel, detect conflicts, re-execute conflicts serially | 3-5x throughput | Medium |
+| **DAG-based scheduling** | Build dependency graph from access lists, execute independent branches in parallel | 5-10x throughput | High |
+| **Block-level access lists** (EIP-7928) | Pre-declare accessed state, scheduler knows conflicts before execution | 2-3x on top of DAG | Medium |
+| **Speculative execution** | Execute txs against predicted state, validate after | Up to 10x | High |
+
+**Gravity Reth approach (proven on Reth):**
+```
+1. Transaction arrives in mempool
+2. Build dependency DAG from storage access patterns
+3. Group independent transactions into parallel batches
+4. Execute batches concurrently across CPU cores
+5. Merge results, detect conflicts
+6. Re-execute conflicts serially
+7. Commit final state
+
+Result: 41,000 TPS / 1.5 Gigagas/s on commodity hardware
+```
+
+**Implementation steps:**
+- [ ] Fork or integrate `grevm` (Gravity's parallel EVM for Reth)
+- [ ] Add access list prediction from mempool analysis
+- [ ] Implement conflict detection and resolution
+- [ ] Benchmark with realistic tx workloads
+- [ ] Tune thread pool size for target hardware
+
+### 12.4 In-Memory State (SALT-style)
+
+> MegaETH keeps ALL active state in RAM using their SALT (State-Aware Lazy Trie) system, only flushing to disk periodically. This eliminates disk I/O as the bottleneck.
+
+| Component | Current (MDBX) | Target (In-Memory) | Notes |
+|-----------|----------------|---------------------|-------|
+| Hot state | Disk-backed | RAM-resident | Active accounts, contracts, storage |
+| Cold state | Disk-backed | Disk-backed | Old/inactive accounts |
+| Trie computation | Per-block | Lazy/batched | Compute Merkle root asynchronously |
+| State flush | Every block | Every N blocks | Configurable persistence interval |
+
+**Implementation:**
+- [ ] LRU cache for hot accounts/storage in front of MDBX
+- [ ] Configurable state cache size (e.g., 8GB, 16GB, 32GB RAM)
+- [ ] Async trie hashing (compute state root in background)
+- [ ] Periodic state snapshots to disk (every 100 blocks or configurable)
+- [ ] Crash recovery: replay from last snapshot + pending blocks
+
+### 12.5 Increased Gas Limits
+
+> MegaETH allows up to 1 BILLION gas per transaction and 512KB contract bytecode. POA chains can do this because signers control the chain — no need for global consensus on limits.
+
+| Parameter | Ethereum Mainnet | Meowchain Current | Target | MegaETH |
+|-----------|-----------------|-------------------|--------|---------|
+| Block gas limit | 30M | 30M (dev), 60M (prod) | 300M-1B | 10B+ |
+| Max tx gas | ~30M | ~30M | 100M-1B | 1B |
+| Contract size | 24KB (EIP-170) | 24KB | 128KB-512KB | 512KB |
+| Calldata cost | 16 gas/byte | 16 gas/byte | 4 gas/byte | Custom |
+
+**Implementation:**
+- [ ] Add `--gas-limit` CLI flag (override genesis gas limit per block)
+- [ ] Add `--max-contract-size` CLI flag (override EIP-170 limit)
+- [ ] Admin governance contract to adjust gas limit dynamically (see Section 13)
+- [ ] Reduce calldata gas cost for POA chain (custom EVM config)
+- [ ] Benchmark chain stability at 100M, 300M, 1B gas limits
+- [ ] Monitor: block processing time must stay under block_time
+
+```rust
+// Example: CLI flags for gas customization
+#[arg(long, default_value = "30000000")]
+gas_limit: u64,
+
+#[arg(long, default_value = "24576")]  // 24KB default
+max_contract_size: usize,
+
+#[arg(long, default_value = "16")]
+calldata_gas_per_byte: u64,
+```
+
+### 12.6 JIT/AOT Compilation for Hot Contracts
+
+> MegaETH uses JIT compilation to convert frequently-called EVM bytecode to native machine code, eliminating interpreter overhead.
+
+| Approach | Speedup | Complexity | Status |
+|----------|---------|------------|--------|
+| **REVM interpreter** (current) | Baseline | N/A | What Reth uses today |
+| **revmc AOT compiler** | 3-10x for hot contracts | Medium | Exists in Reth ecosystem |
+| **Custom JIT** (MegaETH-style) | 10-50x | Very High | Would need deep EVM changes |
+
+**Practical path for Meowchain:**
+- [ ] Enable `revmc` (Reth's ahead-of-time EVM compiler) for known hot contracts
+- [ ] Pre-compile system contracts (EntryPoint, WETH9, Multicall3) at startup
+- [ ] Profile-guided compilation: track call frequency, compile top contracts
+- [ ] Cache compiled code across restarts
+
+### 12.7 Node Specialization
+
+> MegaETH separates nodes into specialized roles: a powerful sequencer does all execution, lightweight replica nodes receive compressed state diffs. Meowchain can do this naturally with POA.
+
+```
+MegaETH Architecture (what we can borrow):
+
+  ┌──────────────────────────────┐
+  │     SEQUENCER NODE           │  <- Only node that executes txs
+  │  - Full EVM execution        │     (in Meowchain: the in-turn signer)
+  │  - All state in RAM          │
+  │  - Produces blocks           │
+  │  - 100 cores, 1TB RAM        │
+  └──────────┬───────────────────┘
+             │ State diffs (compressed)
+             │ NOT full blocks
+  ┌──────────▼───────────────────┐
+  │     REPLICA NODES            │  <- Lightweight, just apply diffs
+  │  - No EVM execution          │     (in Meowchain: full nodes, RPC nodes)
+  │  - Apply state diffs          │
+  │  - Serve RPC reads           │
+  │  - Commodity hardware        │
+  └──────────────────────────────┘
+
+Meowchain Adaptation:
+  - Signer nodes = sequencers (execute + produce blocks)
+  - Full nodes = replicas (validate + serve RPC)
+  - State diff sync = compressed block sync (headers + state changes)
+  - No beacon chain = zero consensus overhead for replicas
+```
+
+**Implementation:**
+- [ ] State diff computation: emit changed storage slots per block
+- [ ] Compressed state diff sync protocol (replicas skip re-execution)
+- [ ] Signer node hardware recommendations (high-core, high-RAM)
+- [ ] Replica node mode: `--mode replica` (receive diffs, no execution)
+- [ ] Snap sync from state snapshots for fast replica bootstrap
+
+### 12.8 Transaction Streaming / Continuous Block Building
+
+> MegaETH doesn't wait for block intervals — it continuously streams transaction results to replicas as they execute. Meowchain can implement "eager" block production.
+
+| Mode | Description | Latency | Complexity |
+|------|-------------|---------|------------|
+| **Interval mining** (current) | Build block every N seconds | N seconds | Done |
+| **Eager mining** | Build block as soon as 1+ txs ready | <100ms | Low |
+| **Streaming** (MegaETH-style) | Stream tx results before block finalized | <10ms | High |
+
+**Implementation for eager mining:**
+- [ ] Watch mempool for new transactions
+- [ ] On new tx arrival: immediately build block (if it's our turn)
+- [ ] Minimum block interval (e.g., 100ms) to avoid empty block spam
+- [ ] `--mining-mode eager|interval` CLI flag
+
+### 12.9 Performance Roadmap Summary
+
+```
+Phase P1 - Quick Wins (1-2 weeks):
+  - [ ] 1-second block time (just a config change)
+  - [ ] Raise gas limit to 100M-300M via CLI flag
+  - [ ] Eager mining mode (build block on tx arrival)
+  - [ ] Max contract size override (128KB, 256KB, 512KB)
+  - [ ] Calldata gas reduction for POA
+  Target: ~1000 TPS, 1s latency
+
+Phase P2 - Parallel EVM (2-4 weeks):
+  - [ ] Integrate grevm (DAG-based parallel execution)
+  - [ ] Access list prediction from mempool
+  - [ ] Multi-threaded block execution
+  Target: ~5000-10000 TPS, 1s latency
+
+Phase P3 - In-Memory State (4-8 weeks):
+  - [ ] RAM-resident hot state cache (configurable size)
+  - [ ] Async trie hashing
+  - [ ] Periodic disk flush (not per-block)
+  - [ ] State diff sync for replicas
+  Target: ~10000-20000 TPS, 500ms latency
+
+Phase P4 - Streaming (8-12 weeks):
+  - [ ] Continuous block production
+  - [ ] State diff streaming to replicas
+  - [ ] JIT compilation for hot contracts
+  - [ ] Sub-100ms blocks
+  Target: ~20000-50000 TPS, <100ms latency
+```
+
+---
+
+## 13. Admin Privileges & Multisig Governance
+
+> A real production POA chain needs governance. Currently, signer management is hardcoded at genesis. This section covers a full governance system using Gnosis Safe multisig and on-chain parameter control.
+
+### 13.1 Governance Architecture
+
+```
+                    ┌─────────────────────────────┐
+                    │     GOVERNANCE SAFE          │
+                    │  (Gnosis Safe Multisig)      │
+                    │  M-of-N signer threshold     │
+                    │  e.g., 3-of-5 signers        │
+                    └──────────┬──────────────────┘
+                               │ Executes txs via Safe
+              ┌────────────────┼────────────────┐
+              │                │                │
+    ┌─────────▼──────┐ ┌──────▼───────┐ ┌──────▼───────┐
+    │ Chain Config    │ │ Signer       │ │ Treasury     │
+    │ Contract        │ │ Registry     │ │ Contract     │
+    │ - gas limit     │ │ - add signer │ │ - fee dist   │
+    │ - block time    │ │ - remove     │ │ - funding    │
+    │ - contract size │ │ - threshold  │ │ - grants     │
+    │ - calldata cost │ │ - rotation   │ │ - burns      │
+    └────────────────┘ └──────────────┘ └──────────────┘
+```
+
+### 13.2 Gnosis Safe Multisig Deployment
+
+> Gnosis Safe secures $100B+ across DeFi. It's battle-tested and supports M-of-N signatures, module extensions, and transaction batching.
+
+| Component | Address (to be deployed) | Purpose |
+|-----------|--------------------------|---------|
+| Safe Singleton | Standard address | Core multisig logic |
+| Safe Proxy Factory | Standard address | Deploy new Safes |
+| Compatibility Fallback Handler | Standard address | ERC-1271, receive hooks |
+| Multi Send | Standard address | Batch transactions |
+| Governance Safe | TBD | Admin multisig for chain |
+
+**Implementation:**
+- [ ] Pre-deploy Gnosis Safe contracts in genesis (like EntryPoint)
+- [ ] Create governance Safe at genesis (initial owners = signers)
+- [ ] Configure M-of-N threshold (e.g., 3-of-5 for production)
+- [ ] Document Safe transaction workflow for chain operations
+- [ ] Deploy Safe UI for signers (or use existing safe.global)
+
+### 13.3 On-Chain Chain Config Contract
+
+> Instead of recompiling the node to change parameters, store chain parameters in a smart contract that the governance Safe controls.
+
+```solidity
+// ChainConfig.sol (deployed in genesis)
+contract ChainConfig {
+    address public governance;  // Governance Safe
+
+    uint256 public gasLimit;           // Default: 30_000_000
+    uint256 public blockTime;          // Default: 2 (seconds)
+    uint256 public maxContractSize;    // Default: 24_576 (bytes)
+    uint256 public calldataGasPerByte; // Default: 16
+    uint256 public maxTxGas;           // Default: 30_000_000
+    bool    public eagerMining;        // Default: false
+
+    modifier onlyGovernance() {
+        require(msg.sender == governance, "not governance");
+        _;
+    }
+
+    function setGasLimit(uint256 _limit) external onlyGovernance {
+        gasLimit = _limit;
+        emit GasLimitUpdated(_limit);
+    }
+
+    function setBlockTime(uint256 _seconds) external onlyGovernance {
+        blockTime = _seconds;
+        emit BlockTimeUpdated(_seconds);
+    }
+
+    // ... more setters
+}
+```
+
+**Node integration:**
+```rust
+// In PoaPayloadBuilder or block production loop:
+// 1. Read ChainConfig contract state at each block
+// 2. Apply dynamic gas limit, block time, etc.
+// 3. No recompilation or restart needed
+```
+
+**Implementation:**
+- [ ] Write `ChainConfig.sol` with all tunable parameters
+- [ ] Pre-deploy in genesis at a known address (e.g., `0x...CONFIG`)
+- [ ] Node reads config contract state before each block
+- [ ] PoaConsensus validates against on-chain config (not hardcoded values)
+- [ ] Governance Safe is the only address that can update parameters
+- [ ] Emit events for all parameter changes (indexable by explorer)
+
+### 13.4 Signer Registry Contract
+
+> Move signer management from hardcoded genesis lists to an on-chain registry that the governance multisig controls.
+
+```solidity
+// SignerRegistry.sol
+contract SignerRegistry {
+    address public governance;
+
+    address[] public signers;
+    mapping(address => bool) public isSigner;
+    uint256 public signerThreshold;  // Min signers for block production
+
+    function addSigner(address signer) external onlyGovernance { ... }
+    function removeSigner(address signer) external onlyGovernance { ... }
+    function setThreshold(uint256 _threshold) external onlyGovernance { ... }
+}
+```
+
+**Implementation:**
+- [ ] Write `SignerRegistry.sol`
+- [ ] Pre-deploy in genesis with initial signers
+- [ ] `PoaConsensus` reads signer list from contract (not from genesis config)
+- [ ] Signer additions/removals take effect at next epoch block
+- [ ] Requires governance Safe approval (M-of-N)
+- [ ] Prevents removing signers below threshold
+
+### 13.5 Treasury / Fee Distribution Contract
+
+> Block rewards and transaction fees should flow through a governed treasury contract, not directly to individual addresses.
+
+```
+Fee Flow:
+  tx fees + block reward
+    → EIP-1967 Miner Proxy (coinbase)
+      → Treasury Contract (governed by Safe)
+        → Signer rewards (40%)
+        → Development fund (30%)
+        → Community grants (20%)
+        → Burn (10%)
+```
+
+**Implementation:**
+- [ ] Write `Treasury.sol` with configurable fee splits
+- [ ] EIP-1967 miner proxy delegates to Treasury as implementation
+- [ ] Governance Safe sets fee split ratios
+- [ ] Automatic distribution at epoch blocks
+- [ ] Grant system: governance can fund ecosystem projects
+
+### 13.6 Admin RPC Namespace
+
+> Admin operations exposed via RPC for authorized callers.
+
+| Method | Description | Access |
+|--------|-------------|--------|
+| `admin_addSigner` | Propose new signer (triggers governance tx) | Signer only |
+| `admin_removeSigner` | Propose signer removal | Signer only |
+| `admin_setGasLimit` | Update gas limit via governance | Signer only |
+| `admin_setBlockTime` | Update block time via governance | Signer only |
+| `admin_nodeInfo` | Node status and configuration | Public |
+| `admin_peers` | Connected peer info | Signer only |
+| `admin_chainConfig` | Current on-chain config values | Public |
+
+**Implementation:**
+- [ ] Custom RPC namespace `admin_*` / `meow_*`
+- [ ] JWT authentication for admin methods
+- [ ] Methods that modify chain trigger governance Safe transactions
+- [ ] Read-only methods available without auth
+
+### 13.7 Role-Based Access Control
+
+```
+Roles in Meowchain:
+
+  SUPER_ADMIN (Governance Safe - M-of-N multisig)
+    ├── Can change ANY chain parameter
+    ├── Can add/remove signers
+    ├── Can upgrade contracts (via proxy)
+    ├── Can pause the chain (emergency)
+    └── Can transfer governance
+
+  SIGNER (Individual signer accounts)
+    ├── Can produce blocks (when in-turn)
+    ├── Can propose governance transactions
+    ├── Can vote on proposals
+    └── Cannot unilaterally change parameters
+
+  OPERATOR (Full node operators)
+    ├── Can read all chain state
+    ├── Can serve RPC
+    └── Cannot produce blocks or change params
+
+  USER (Anyone)
+    ├── Can send transactions
+    ├── Can read state via RPC
+    └── Can deploy contracts (within limits)
+```
+
+---
+
+## 14. Dynamic Chain Parameters
+
+> Every parameter that's currently hardcoded should be dynamically adjustable by governance, without requiring a node restart or recompilation.
+
+### 14.1 Parameter Overview
+
+| Parameter | Current Source | Target Source | Who Can Change | Change Method |
+|-----------|---------------|--------------|----------------|---------------|
+| Gas limit | `genesis.rs` hardcoded | ChainConfig contract | Governance Safe | On-chain tx |
+| Block time | CLI `--block-time` | ChainConfig contract | Governance Safe | On-chain tx |
+| Signer list | `genesis.rs` hardcoded | SignerRegistry contract | Governance Safe | On-chain tx |
+| Contract size limit | EIP-170 (24KB) | ChainConfig contract | Governance Safe | On-chain tx |
+| Calldata gas cost | EIP-2028 (16 gas/byte) | ChainConfig contract | Governance Safe | On-chain tx |
+| Base fee | EIP-1559 algo | ChainConfig (min/max bounds) | Governance Safe | On-chain tx |
+| Blob gas params | EIP-4844 defaults | ChainConfig contract | Governance Safe | On-chain tx |
+| Fee distribution | N/A (all to coinbase) | Treasury contract | Governance Safe | On-chain tx |
+| Mining mode | CLI `--block-time` | ChainConfig contract | Governance Safe | On-chain tx |
+
+### 14.2 Emergency Controls
+
+| Action | Who | How | When |
+|--------|-----|-----|------|
+| **Pause chain** | Governance Safe (M-of-N) | Set block time to MAX | Critical bug discovered |
+| **Emergency gas limit** | Any single signer | Temporary 1-block override | Block too large / DoS |
+| **Signer key rotation** | Individual signer | Replace own key via registry | Key compromise |
+| **Emergency hardfork** | Governance Safe | Deploy new node binary + coordinate signers | Critical vulnerability |
+
+### 14.3 Timelock for Sensitive Changes
+
+> Critical parameter changes should have a timelock delay to give node operators time to prepare.
+
+| Parameter | Timelock | Reason |
+|-----------|----------|--------|
+| Gas limit change | 24 hours | Operators need to verify hardware can handle it |
+| Block time change | 24 hours | Affects all infrastructure (monitoring, etc.) |
+| Add signer | 48 hours | New signer needs to set up infrastructure |
+| Remove signer | 7 days | Signer needs time to wind down |
+| Contract size limit | 24 hours | Affects deployment tooling |
+| Emergency pause | None (immediate) | Must be instant for safety |
+| Emergency resume | 1 hour | Prevent accidental restart |
+
+**Implementation:**
+- [ ] Deploy OpenZeppelin `TimelockController` contract
+- [ ] Governance Safe executes through Timelock for sensitive operations
+- [ ] Bypass Timelock only for emergency pause
+- [ ] All timelocked operations emit events for monitoring
+
+---
+
+## 15. Meowchain vs MegaETH vs Ethereum Comparison
+
+### 15.1 Architecture Comparison
+
+| Feature | Ethereum Mainnet | MegaETH | Meowchain (Current) | Meowchain (Target) |
+|---------|-----------------|---------|---------------------|---------------------|
+| **Consensus** | PoS (beacon chain) | Single sequencer | POA (3-5 signers) | POA + governance multisig |
+| **Block time** | 12 seconds | 10 milliseconds | 2 seconds | 1 second (100ms stretch) |
+| **TPS** | ~15-30 | 100,000+ | ~100-200 | 5,000-50,000 |
+| **Gas limit** | 30M | 10B+ | 30M-60M | 300M-1B (configurable) |
+| **Contract size** | 24KB | 512KB | 24KB | 512KB (configurable) |
+| **State storage** | Disk (LevelDB/PebbleDB) | RAM (SALT) | Disk (MDBX) | RAM cache + MDBX |
+| **EVM execution** | Sequential | Parallel + JIT | Sequential | Parallel (grevm) |
+| **Node types** | Validator + Full | Sequencer + Replica | Signer + Full | Signer + Replica |
+| **Finality** | ~13 min (2 epochs) | Instant | Instant (POA) | Instant |
+| **Decentralization** | High (~900K validators) | Low (1 sequencer) | Medium (3-5 signers) | Medium (5-21 signers) |
+| **Governance** | Off-chain (EIPs) | Centralized | Hardcoded | On-chain multisig |
+| **EVM compatibility** | Native | Full | Full | Full |
+| **Chain ID** | 1 | 6342 (testnet) | 9323310 | 9323310 |
+
+### 15.2 What Meowchain Can Realistically Achieve
+
+```
+Realistic targets with POA + Reth optimizations:
+
+  Tier 1 - Easy (days):
+    Block time:       2s → 1s
+    Gas limit:        30M → 300M
+    Contract size:    24KB → 512KB
+    TPS:              ~200 → ~1000
+
+  Tier 2 - Medium (weeks):
+    Parallel EVM:     Sequential → 4-8 thread parallel
+    Mining mode:      Interval → Eager (tx-triggered)
+    Gas limit:        300M → 1B
+    TPS:              ~1000 → ~5000-10000
+
+  Tier 3 - Hard (months):
+    State storage:    Disk → RAM cache (hot state)
+    Trie compute:     Per-block → Async/batched
+    Block building:   Interval → Continuous/streaming
+    TPS:              ~10000 → ~20000-50000
+
+  Tier 4 - MegaETH-level (requires deep custom work):
+    Block time:       100ms → 10ms
+    State:            Full in-memory (SALT-equivalent)
+    EVM:              JIT-compiled hot paths
+    Sync:             State-diff streaming
+    TPS:              ~50000 → ~100000+
+```
+
+### 15.3 Key Insight: POA vs MegaETH Tradeoffs
+
+```
+MegaETH's speed comes from CENTRALIZATION:
+  - Single sequencer = no coordination overhead
+  - One machine does everything = no network latency
+  - Trust the sequencer = skip validation on replicas
+
+Meowchain's approach is MORE DECENTRALIZED than MegaETH:
+  - Multiple signers (3-5+) vs single sequencer
+  - All nodes validate blocks (not just apply diffs)
+  - Governance multisig (not single operator)
+
+This means Meowchain will always be SLOWER than MegaETH for raw TPS,
+but has BETTER censorship resistance and fault tolerance.
+
+The sweet spot:
+  - 1-second blocks (100x faster than Ethereum, 100x slower than MegaETH)
+  - 5K-10K TPS (300x Ethereum, 10x slower than MegaETH)
+  - 5-21 signers (vs 1 MegaETH sequencer)
+  - On-chain governance (vs MegaETH centralized control)
+  - Full EVM compatibility (same as both)
+```
+
+---
+
+## Priority Execution Order (Updated)
+
+```
+Phase 0 - Fix the Foundation:                                            ~70% done
+  [x] 0a. NodeConfig::default()
+  [x] 0b. Production NodeBuilder + MDBX
+  [x] 0c. PoaNode with PoaConsensus
+  [ ] 0d. PoaPayloadBuilder (signs blocks)                               BIGGEST GAP
+  [~] 0e. Signer in pipeline (monitoring only)
+  [ ] 0f. Difficulty field (1=in-turn, 2=out-of-turn)
+  [ ] 0g. Epoch signer list in extra_data
+  [x] 0h. Signature verification on import
+  [x] 0i. EIP-1967 miner proxy
+
+Phase 1 - Make It Connectable:                                           ~85% done
+  [x] 1. CLI parsing
+  [ ] 2. `meowchain init` subcommand
+  [x] 3. External HTTP/WS RPC
+  [x] 4. Chain ID unified
+  [x] 5. Tests passing (70)
+  [x] 6. Canonical genesis.json
+
+Phase 2 - Performance Engineering (NEW - MegaETH-inspired):              0% done
+  [ ] 7. 1-second block time (config change)
+  [ ] 8. Gas limit CLI flag (100M, 300M, 1B)
+  [ ] 9. Max contract size override (128KB-512KB)
+  [ ] 10. Eager mining mode (build on tx arrival)
+  [ ] 11. Calldata gas reduction
+  [ ] 12. Parallel EVM (grevm integration)
+
+Phase 3 - Governance & Admin (NEW):                                      0% done
+  [ ] 13. Deploy Gnosis Safe contracts in genesis
+  [ ] 14. ChainConfig contract (dynamic gas limit, block time)
+  [ ] 15. SignerRegistry contract (on-chain signer management)
+  [ ] 16. Treasury contract (fee distribution)
+  [ ] 17. Admin RPC namespace (admin_*, meow_*)
+  [ ] 18. Timelock for sensitive parameter changes
+
+Phase 4 - Make It Multi-Node:                                            ~15% done
+  [ ] 19. Bootnodes with static enode URLs
+  [ ] 20. 3-signer network test
+  [ ] 21. State sync (full sync from genesis)
+  [ ] 22. Fork choice rule
+  [x] 23. Key management (--signer-key / SIGNER_KEY)
+  [ ] 24. Multi-node integration tests
+
+Phase 5 - Advanced Performance (MegaETH Tier 3-4):                       0% done
+  [ ] 25. In-memory hot state cache (LRU + configurable RAM)
+  [ ] 26. Async trie hashing
+  [ ] 27. State diff sync for replica nodes
+  [ ] 28. JIT compilation for hot contracts (revmc)
+  [ ] 29. Continuous/streaming block production
+  [ ] 30. Sub-100ms blocks
+
+Phase 6 - Production & Ecosystem:                                        ~10% done
+  [x] 31. Genesis pre-deployed contracts (EntryPoint, WETH9, etc.)
+  [ ] 32. Blockscout integration
+  [ ] 33. Bridge to Ethereum mainnet
+  [ ] 34. ERC-8004 registries
+  [ ] 35. Oracle integration
+  [ ] 36. Faucet + docs + SDK
+  [ ] 37. Fusaka hardfork support
+  [ ] 38. CI/CD pipeline
+  [ ] 39. Security audit
+```
+
+---
+
 *Last updated: 2026-02-13 | Meowchain Custom POA on Reth*
 *Tracks: All finalized EIPs through Fusaka + planned Glamsterdam/Hegota*
+*Performance targets: MegaETH-inspired optimizations for 1s blocks, 5K-10K+ TPS*

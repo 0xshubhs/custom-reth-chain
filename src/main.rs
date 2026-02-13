@@ -33,10 +33,13 @@ pub mod chainspec;
 pub mod consensus;
 pub mod genesis;
 pub mod node;
+pub mod payload;
+pub mod rpc;
 pub mod signer;
 
 use crate::chainspec::{PoaChainSpec, PoaConfig};
 use crate::node::PoaNode;
+use crate::rpc::{MeowApiServer, MeowRpc};
 use crate::signer::SignerManager;
 use alloy_consensus::BlockHeader;
 use clap::Parser;
@@ -102,6 +105,15 @@ struct Cli {
     /// Disable dev mode (no auto-mining)
     #[arg(long)]
     no_dev: bool,
+
+    /// Override block gas limit (e.g., 100000000 for 100M, 1000000000 for 1B)
+    #[arg(long)]
+    gas_limit: Option<u64>,
+
+    /// Enable eager mining: build block immediately when transactions arrive
+    /// instead of waiting for block-time interval
+    #[arg(long)]
+    eager_mining: bool,
 }
 
 /// Main entry point for the POA node
@@ -118,7 +130,11 @@ async fn main() -> eyre::Result<()> {
 
     // Create chain specification based on CLI flags
     let poa_chain = if cli.production {
-        let genesis = genesis::create_genesis(genesis::GenesisConfig::production());
+        let mut config = genesis::GenesisConfig::production();
+        if let Some(gas_limit) = cli.gas_limit {
+            config.gas_limit = gas_limit;
+        }
+        let genesis = genesis::create_genesis(config);
         let poa_config = PoaConfig {
             period: cli.block_time,
             epoch: 30000,
@@ -130,6 +146,9 @@ async fn main() -> eyre::Result<()> {
         let mut config = genesis::GenesisConfig::dev();
         config.chain_id = cli.chain_id;
         config.block_period = cli.block_time;
+        if let Some(gas_limit) = cli.gas_limit {
+            config.gas_limit = gas_limit;
+        }
         let genesis = genesis::create_genesis(config);
         let poa_config = PoaConfig {
             period: cli.block_time,
@@ -174,13 +193,17 @@ async fn main() -> eyre::Result<()> {
         println!("  Set --signer-key or SIGNER_KEY environment variable.");
     }
 
-    // Configure dev args (interval-based block production)
+    // Configure dev args (interval-based or eager block production)
     let dev_args = if !is_dev_mode {
         DevArgs::default()
     } else {
         DevArgs {
             dev: true,
-            block_time: Some(Duration::from_secs(poa_chain.block_period())),
+            block_time: if cli.eager_mining {
+                None // Mine immediately on tx arrival
+            } else {
+                Some(Duration::from_secs(poa_chain.block_period()))
+            },
             block_max_transactions: None,
             ..Default::default()
         }
@@ -210,6 +233,8 @@ async fn main() -> eyre::Result<()> {
 
     println!("\nNode configuration:");
     println!("  Dev mode:    {}", is_dev_mode);
+    println!("  Mining mode: {}", if cli.eager_mining { "eager (tx-triggered)" } else { "interval" });
+    println!("  Gas limit:   {}", poa_chain.inner().genesis().gas_limit);
     println!("  HTTP RPC:    {}:{}", http_addr, cli.http_port);
     println!("  WS RPC:      {}:{}", ws_addr, cli.ws_port);
     println!("  Data dir:    {:?}", cli.datadir);
@@ -222,16 +247,31 @@ async fn main() -> eyre::Result<()> {
     std::fs::create_dir_all(&db_path)?;
     let database = Arc::new(init_db(&db_path, Default::default())?);
 
-    // Build and launch the node with PoaNode (custom consensus)
-    // PoaNode injects PoaConsensus into the validation pipeline.
+    // Build and launch the node with PoaNode (custom consensus + payload builder)
+    // PoaNode injects PoaConsensus for validation and PoaPayloadBuilder for signed block production.
     // dev_mode controls whether signature verification is enforced.
+    // Clone values for the RPC closure (captured by move)
+    let rpc_chain_spec = chain_spec_arc.clone();
+    let rpc_signer_manager = signer_manager.clone();
+    let rpc_dev_mode = is_dev_mode;
+
     let NodeHandle {
         node,
         node_exit_future,
     } = NodeBuilder::new(node_config)
         .with_database(database)
         .with_launch_context(tasks)
-        .node(PoaNode::new(chain_spec_arc.clone()).with_dev_mode(is_dev_mode))
+        .node(
+            PoaNode::new(chain_spec_arc.clone())
+                .with_dev_mode(is_dev_mode)
+                .with_signer_manager(signer_manager.clone()),
+        )
+        .extend_rpc_modules(move |ctx| {
+            let meow_rpc = MeowRpc::new(rpc_chain_spec, rpc_signer_manager, rpc_dev_mode);
+            ctx.modules.merge_configured(meow_rpc.into_rpc())?;
+            println!("  meow_* RPC namespace registered");
+            Ok(())
+        })
         .launch_with_debug_capabilities()
         .await?;
 
@@ -302,3 +342,4 @@ async fn main() -> eyre::Result<()> {
     // Keep the node running
     node_exit_future.await
 }
+
