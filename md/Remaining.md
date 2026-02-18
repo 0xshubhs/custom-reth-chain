@@ -1,6 +1,6 @@
 ### Meowchain Custom POA Chain - Status Tracker
 
-> **Last audited: 2026-02-13**
+> **Last audited: 2026-02-17**
 
 ## Table of Contents
 
@@ -29,13 +29,16 @@
 
 | Module | File | Lines | Status |
 |--------|------|-------|--------|
-| Entry point | `main.rs` | ~304 | Working - CLI parsing, interval mining, dev mode, block monitoring |
-| Node type | `node.rs` | ~175 | Working - PoaNode with PoaConsensusBuilder, DebugNode impl |
+| Entry point | `main.rs` | ~345 | Working - CLI parsing, interval mining, dev mode, block monitoring |
+| Node type | `node.rs` | ~258 | Working - PoaNode with PoaConsensusBuilder + PoaPayloadBuilderBuilder, DebugNode impl |
 | Chain spec | `chainspec.rs` | ~292 | Complete - all hardforks, POA config, trait impls |
-| Consensus | `consensus.rs` | ~385 | Partial - structural validation works, NO signature verification |
-| Genesis | `genesis.rs` | ~575 | Complete - dev/production configs, system contracts + ERC-4337 pre-deploys |
-| Signer | `signer.rs` | ~298 | Working module - loaded at runtime, NOT in block production pipeline |
-| Bytecodes | `src/bytecodes/` | 10 files | Complete - .bin + .hex for all pre-deployed contracts |
+| Consensus | `consensus.rs` | ~1256 | Complete - signature verification, timing, gas, receipt root, difficulty validation |
+| Genesis | `genesis.rs` | ~575 | Complete - dev/production configs, system contracts + ERC-4337 + Gnosis Safe pre-deploys |
+| Payload | `payload.rs` | ~507 | Complete - wraps EthereumPayloadBuilder + POA signing (difficulty, epoch signers) |
+| On-chain | `onchain.rs` | ~1129 | Infrastructure complete - StorageReader trait, slot constants, decode/encode, GenesisStorageReader. **NOT wired to runtime** |
+| RPC | `rpc.rs` | ~200+ | Complete - meow_chainConfig, meow_signers, meow_nodeInfo |
+| Signer | `signer.rs` | ~298 | Complete - loaded at runtime, wired into PoaPayloadBuilder via BlockSealer |
+| Bytecodes | `src/bytecodes/` | 16 files | Complete - .bin + .hex for all pre-deployed contracts |
 
 ### Hardforks Enabled (All at Block 0 / Timestamp 0)
 
@@ -78,18 +81,24 @@
 - [x] 3 default POA signers (round-robin logic in chainspec)
 - [x] EIP-1559 base fee (0.875 gwei initial)
 - [x] EIP-4844 blob support enabled
-- [x] Basic unit tests in each module
-- [x] CLI argument parsing (clap) - chain-id, block-time, datadir, http/ws config, signer-key
+- [x] Basic unit tests in each module (**187 tests passing** as of 2026-02-17)
+- [x] CLI argument parsing (clap) - chain-id, block-time, datadir, http/ws config, signer-key, gas-limit, eager-mining, production, no-dev
 - [x] External HTTP RPC on 0.0.0.0:8545
 - [x] External WebSocket RPC on 0.0.0.0:8546
 - [x] Runtime signer key loading from CLI `--signer-key` or `SIGNER_KEY` env var
 - [x] Chain ID unified to 9323310 across dev and production genesis configs
-- [x] PoaNode type replacing EthereumNode (injects PoaConsensus into Reth pipeline)
+- [x] PoaNode type replacing EthereumNode (injects PoaConsensus + PoaPayloadBuilder into Reth pipeline)
 - [x] PoaConsensusBuilder wired into ComponentsBuilder
+- [x] PoaPayloadBuilderBuilder wired into ComponentsBuilder (signs blocks, difficulty 1/2, epoch signers)
+- [x] BlockSealer wired into payload pipeline via PoaPayloadBuilder.sign_payload()
 - [x] Production genesis config (5 signers, 60M gas, tiered treasury/ops/community allocation)
 - [x] Genesis extra_data with POA format (vanity + signers + seal)
 - [x] Block monitoring task that logs signer turn info
 - [x] ERC-4337 EntryPoint, WETH9, Multicall3, CREATE2 Deployer pre-deployed at genesis
+- [x] Gnosis Safe v1.3.0 contracts pre-deployed in genesis (Singleton, Proxy Factory, Fallback Handler, MultiSend)
+- [x] Governance contracts in genesis: ChainConfig, SignerRegistry, Treasury (with pre-populated storage)
+- [x] meow_* RPC namespace: chainConfig, signers, nodeInfo
+- [x] On-chain reader infrastructure (`onchain.rs`): StorageReader trait, slot constants, read_gas_limit(), read_signer_list(), is_signer_on_chain(), GenesisStorageReader
 
 ---
 
@@ -99,28 +108,28 @@
 
 | # | Issue | Status | Details | File |
 |---|-------|--------|---------|------|
-| 1 | **Block signing not integrated** | PARTIALLY FIXED | `SignerManager` is instantiated, loaded from CLI/env, and a block monitoring task is spawned. Blocks are produced unsigned by Reth's default payload builder. Block rewards go to EIP-1967 miner proxy at `0x...1967`. | `main.rs`, `signer.rs`, `genesis.rs` |
-| 2 | **No external RPC server** | FIXED | HTTP RPC on `0.0.0.0:8545` and WS on `0.0.0.0:8546` configured via `RpcServerArgs`. | `main.rs:189-199` |
+| 1 | **Block signing not integrated** | FIXED | `PoaPayloadBuilder` wraps `EthereumPayloadBuilder` + POA signing. `BlockSealer.seal_header()` called in `sign_payload()`. Difficulty 1/2, epoch signer lists in extra_data. | `payload.rs`, `signer.rs` |
+| 2 | **No external RPC server** | FIXED | HTTP RPC on `0.0.0.0:8545` and WS on `0.0.0.0:8546` configured via `RpcServerArgs`. | `main.rs` |
 | 3 | **No consensus enforcement on sync** | FIXED | `PoaConsensus` validates headers with POA signature recovery in production mode. Dev mode skips signature checks. `recover_signer()` called in `validate_header()`. | `consensus.rs:249-287` |
 | 4 | **Post-execution validation stubbed** | FIXED | Validates `gas_used`, receipt root, and logs bloom against pre-computed values. | `consensus.rs:393-429` |
 | 5 | **Chain ID mismatch** | FIXED | All configs use 9323310. `sample-genesis.json` regenerated from code with correct chain ID, all contracts. | `genesis.rs`, `sample-genesis.json` |
-| 6 | **No CLI argument parsing** | FIXED | Full `clap` CLI with all flags. | `main.rs:62-105` |
+| 6 | **No CLI argument parsing** | FIXED | Full `clap` CLI with all flags including `--gas-limit`, `--eager-mining`, `--production`. | `main.rs:62-118` |
 | 7 | **Hardcoded dev keys in binary** | PARTIALLY FIXED | Production loads from `--signer-key` / `SIGNER_KEY`. Dev keys still hardcoded for dev mode. | `main.rs:156-175`, `signer.rs:205-216` |
 
 ### P0-ALPHA - Fundamental Architecture Problems
 
-> **Progress update (2026-02-13):** The node uses production `NodeBuilder` with persistent MDBX database. PoaConsensus validates signatures in production mode. EIP-1967 miner proxy collects block rewards. 70 tests pass.
+> **Progress update (2026-02-17):** ALL P0-ALPHA items FIXED. Production NodeBuilder with MDBX. PoaConsensus validates signatures. PoaPayloadBuilder signs blocks (difficulty 1/2, epoch signers). BlockSealer wired into pipeline. 187 tests pass. Requires rustc 1.93.1+.
 
 | # | Issue | Status | What the code does now | What still needs to happen |
 |---|-------|--------|------------------------|---------------------------|
 | A1 | **`NodeConfig::test()` used** | FIXED | `NodeConfig::default()` with `.with_dev()`, `.with_rpc()`, `.with_chain()`, `.with_datadir_args()` | Done |
 | A2 | **`testing_node_with_datadir()` used** | FIXED | Production `NodeBuilder::new(config).with_database(init_db()).with_launch_context(executor)` with persistent MDBX | Done |
-| A3 | **`EthereumNode::default()` used** | FIXED | `.node(PoaNode::new(chain_spec).with_dev_mode(is_dev_mode))` injects `PoaConsensus` | Done |
-| A4 | **No custom PayloadBuilder** | NOT FIXED | Still uses `BasicPayloadServiceBuilder::default()` wrapping `EthereumPayloadBuilder`. No signing, no difficulty field, no epoch signer list in produced blocks | Must implement `PoaPayloadBuilder` |
+| A3 | **`EthereumNode::default()` used** | FIXED | `.node(PoaNode::new(chain_spec).with_dev_mode(is_dev_mode))` injects `PoaConsensus` + `PoaPayloadBuilder` | Done |
+| A4 | **No custom PayloadBuilder** | FIXED | `PoaPayloadBuilder` wraps `EthereumPayloadBuilder` + signs blocks with `BlockSealer`. Sets difficulty 1/2, embeds signer list at epoch blocks. | Done |
 | A5 | **Consensus module is dead code** | FIXED | `PoaConsensus` LIVE in pipeline with signature verification | Done |
-| A6 | **Signer module is dead code** | PARTIALLY FIXED | `SignerManager` loaded with keys, used in monitoring. `BlockSealer` exists but not in payload pipeline | Need `PoaPayloadBuilder` integration |
+| A6 | **Signer module is dead code** | FIXED | `BlockSealer` wired into `PoaPayloadBuilder.sign_payload()`. `SignerManager` loaded and used for block production. | Done |
 
-**Current architecture (2026-02-13):**
+**Current architecture (2026-02-17):**
 
 ```
 What we have now:
@@ -129,16 +138,20 @@ What we have now:
     -> PoaNode (custom node type, dev_mode flag)
       -> Components:
         consensus:       PoaConsensus (LIVE - signature verification, timing, gas, receipt root)
-        payload_builder: EthereumPayloadBuilder (DEFAULT - no signing)
+        payload_builder: PoaPayloadBuilder (LIVE - signs blocks, difficulty 1/2, epoch signers)
         network:         EthereumNetworkBuilder (DEFAULT)
         pool:            EthereumPoolBuilder (DEFAULT)
       -> Block rewards: go to EIP-1967 miner proxy (0x...1967)
-      -> Block production: Reth dev mining (unsigned blocks)
-      -> SignerManager: loaded with keys, ready for integration
+      -> Block production: signed POA blocks with round-robin signer rotation
+      -> SignerManager + BlockSealer: wired into payload pipeline
+      -> meow_* RPC: chainConfig, signers, nodeInfo
+      -> Governance: ChainConfig + SignerRegistry + Treasury + Gnosis Safe in genesis
 
-What still needs to happen:
-  1. Implement PoaPayloadBuilder (signs blocks, sets difficulty, epoch signers)
-  2. Wire BlockSealer into the payload building pipeline
+What still needs to happen (on-chain governance wiring):
+  1. PoaPayloadBuilder reads gas limit from ChainConfig contract (currently hardcoded)
+  2. PoaConsensus reads signer list from SignerRegistry contract (currently hardcoded)
+  3. Shared live cache (RwLock) in PoaChainSpec for consensus ↔ payload communication
+  4. StateProviderStorageReader adapter in onchain.rs to bridge Reth → StorageReader trait
 ```
 
 ### P1 - Required for Production
@@ -919,7 +932,7 @@ Deploy:
 | # | Issue | File | Details |
 |---|-------|------|---------|
 | C1 | **`testing_node_with_datadir()` still used** | ~~`main.rs:219`~~ | **FIXED** - Now uses production `NodeBuilder::new(config).with_database(init_db()).with_launch_context(executor)` with persistent MDBX database. |
-| C2 | **Block monitoring logs but doesn't sign** | `main.rs:244-283` | The spawned task detects which signer should sign each block and logs it, but `BlockSealer.seal_header()` is never called. Requires `PoaPayloadBuilder` integration. |
+| C2 | **Block monitoring logs but doesn't sign** | ~~`main.rs`~~ | **FIXED** - `PoaPayloadBuilder.sign_payload()` calls `BlockSealer.seal_header()` during block production. Block monitoring task now reports signed blocks. |
 | C3 | **`validate_header()` doesn't verify signatures** | ~~`consensus.rs`~~ | **FIXED** - Production mode calls `recover_signer()` and `validate_signer()` to verify block signatures. Dev mode skips (unsigned blocks). |
 | C4 | **`validate_block_pre_execution()` silently allows invalid extra_data** | ~~`consensus.rs`~~ | **FIXED** - Production mode rejects blocks with extra_data shorter than vanity+seal. Dev mode allows (unsigned blocks from Reth dev mining). |
 
@@ -935,9 +948,9 @@ Deploy:
 
 ### Suggestions for Next Steps
 
-1. **Highest priority:** Implement `PoaPayloadBuilder` - this is the single biggest gap. Without it, blocks are unsigned and the chain is functionally identical to a vanilla Ethereum dev node.
+1. **Highest priority:** Wire on-chain contract reads into payload builder & consensus. `onchain.rs` has full reader infrastructure (50+ tests) but nothing calls it at runtime. The payload builder uses hardcoded gas limits and consensus uses hardcoded signers. This is the last step to make the chain governable without downtime.
 
-2. **Second priority:** Wire `BlockSealer` into the payload building pipeline for block signing during production.
+2. **Second priority:** Multi-node test (3 signers + 1 full node on separate machines).
 
 3. **Third priority:** Encrypted keystore support (EIP-2335) for production signer key management.
 
@@ -1208,8 +1221,9 @@ Phase P4 - Streaming (8-12 weeks):
 | Governance Safe | TBD | Admin multisig for chain |
 
 **Implementation:**
-- [ ] Pre-deploy Gnosis Safe contracts in genesis (like EntryPoint)
-- [ ] Create governance Safe at genesis (initial owners = signers)
+- [x] Pre-deploy Gnosis Safe contracts in genesis: Singleton (`0xd9Db...`), Proxy Factory (`0xa6B7...`), Fallback Handler (`0xf48f...`), MultiSend (`0xA238...`)
+- [x] Governance Safe address reserved at `0x000000000000000000000000000000006F5AFE00`
+- [ ] Create governance Safe as proxy (currently just address reserved, not a Safe proxy)
 - [ ] Configure M-of-N threshold (e.g., 3-of-5 for production)
 - [ ] Document Safe transaction workflow for chain operations
 - [ ] Deploy Safe UI for signers (or use existing safe.global)
@@ -1258,11 +1272,12 @@ contract ChainConfig {
 ```
 
 **Implementation:**
-- [ ] Write `ChainConfig.sol` with all tunable parameters
-- [ ] Pre-deploy in genesis at a known address (e.g., `0x...CONFIG`)
-- [ ] Node reads config contract state before each block
-- [ ] PoaConsensus validates against on-chain config (not hardcoded values)
-- [ ] Governance Safe is the only address that can update parameters
+- [x] Write `ChainConfig.sol` with all tunable parameters (`contracts/ChainConfig.sol`)
+- [x] Pre-deploy in genesis at `0x00000000000000000000000000000000C04F1600` with pre-populated storage
+- [x] `onchain.rs`: `read_chain_config()`, `read_gas_limit()`, `read_block_time()` + 50+ tests
+- [ ] **Node reads config contract state before each block** ← NOT WIRED
+- [ ] **PoaConsensus validates against on-chain config (not hardcoded values)** ← NOT WIRED
+- [x] Governance Safe (`0x000000000000000000000000000000006F5AFE00`) is admin in contract storage
 - [ ] Emit events for all parameter changes (indexable by explorer)
 
 ### 13.4 Signer Registry Contract
@@ -1285,11 +1300,12 @@ contract SignerRegistry {
 ```
 
 **Implementation:**
-- [ ] Write `SignerRegistry.sol`
-- [ ] Pre-deploy in genesis with initial signers
-- [ ] `PoaConsensus` reads signer list from contract (not from genesis config)
+- [x] Write `SignerRegistry.sol` (`contracts/SignerRegistry.sol`)
+- [x] Pre-deploy in genesis at `0x000000000000000000000000000000005164EB00` with initial signers in storage
+- [x] `onchain.rs`: `read_signer_list()`, `is_signer_on_chain()`, dynamic array + mapping slot computation
+- [ ] **`PoaConsensus` reads signer list from contract (not from genesis config)** ← NOT WIRED
 - [ ] Signer additions/removals take effect at next epoch block
-- [ ] Requires governance Safe approval (M-of-N)
+- [x] Governance Safe is admin in contract storage
 - [ ] Prevents removing signers below threshold
 
 ### 13.5 Treasury / Fee Distribution Contract
@@ -1329,7 +1345,8 @@ Fee Flow:
 | `admin_chainConfig` | Current on-chain config values | Public |
 
 **Implementation:**
-- [ ] Custom RPC namespace `admin_*` / `meow_*`
+- [x] Custom RPC namespace `meow_*` (chainConfig, signers, nodeInfo) registered via `extend_rpc_modules()`
+- [ ] `admin_*` namespace (addPeer, removePeer, nodeInfo)
 - [ ] JWT authentication for admin methods
 - [ ] Methods that modify chain trigger governance Safe transactions
 - [ ] Read-only methods available without auth
@@ -1491,74 +1508,82 @@ The sweet spot:
 
 ---
 
-## Priority Execution Order (Updated)
+## Priority Execution Order (Updated 2026-02-17)
 
 ```
-Phase 0 - Fix the Foundation:                                            ~70% done
+Phase 0 - Fix the Foundation:                                            100% done
   [x] 0a. NodeConfig::default()
   [x] 0b. Production NodeBuilder + MDBX
   [x] 0c. PoaNode with PoaConsensus
-  [ ] 0d. PoaPayloadBuilder (signs blocks)                               BIGGEST GAP
-  [~] 0e. Signer in pipeline (monitoring only)
-  [ ] 0f. Difficulty field (1=in-turn, 2=out-of-turn)
-  [ ] 0g. Epoch signer list in extra_data
+  [x] 0d. PoaPayloadBuilder (signs blocks, difficulty 1/2, epoch signers)
+  [x] 0e. Signer in pipeline (BlockSealer wired into PoaPayloadBuilder)
+  [x] 0f. Difficulty field (1=in-turn, 2=out-of-turn)
+  [x] 0g. Epoch signer list in extra_data
   [x] 0h. Signature verification on import
   [x] 0i. EIP-1967 miner proxy
 
-Phase 1 - Make It Connectable:                                           ~85% done
-  [x] 1. CLI parsing
+Phase 1 - Make It Connectable:                                           ~90% done
+  [x] 1. CLI parsing (--gas-limit, --eager-mining, --production, --no-dev)
   [ ] 2. `meowchain init` subcommand
   [x] 3. External HTTP/WS RPC
   [x] 4. Chain ID unified
-  [x] 5. Tests passing (70)
+  [x] 5. Tests passing (187 tests)
   [x] 6. Canonical genesis.json
+  [x] 7. meow_* RPC namespace (chainConfig, signers, nodeInfo)
 
-Phase 2 - Performance Engineering (NEW - MegaETH-inspired):              0% done
-  [ ] 7. 1-second block time (config change)
-  [ ] 8. Gas limit CLI flag (100M, 300M, 1B)
-  [ ] 9. Max contract size override (128KB-512KB)
-  [ ] 10. Eager mining mode (build on tx arrival)
-  [ ] 11. Calldata gas reduction
-  [ ] 12. Parallel EVM (grevm integration)
+Phase 2 - Performance Engineering (MegaETH-inspired):                    ~15% done
+  [x] 8. Gas limit CLI flag (--gas-limit)
+  [x] 9. Eager mining CLI flag (--eager-mining)
+  [ ] 10. 1-second block time default
+  [ ] 11. Max contract size override (128KB-512KB)
+  [ ] 12. Calldata gas reduction
+  [ ] 13. Parallel EVM (grevm integration)
 
-Phase 3 - Governance & Admin (NEW):                                      0% done
-  [ ] 13. Deploy Gnosis Safe contracts in genesis
-  [ ] 14. ChainConfig contract (dynamic gas limit, block time)
-  [ ] 15. SignerRegistry contract (on-chain signer management)
-  [ ] 16. Treasury contract (fee distribution)
-  [ ] 17. Admin RPC namespace (admin_*, meow_*)
-  [ ] 18. Timelock for sensitive parameter changes
+Phase 3 - Governance & Admin:                                            ~60% done
+  [x] 14. Deploy Gnosis Safe contracts in genesis (Singleton, Proxy Factory, Fallback, MultiSend)
+  [x] 15. ChainConfig contract deployed in genesis with pre-populated storage
+  [x] 16. SignerRegistry contract deployed in genesis with pre-populated storage
+  [x] 17. Treasury contract deployed in genesis
+  [x] 18. meow_* RPC namespace (chainConfig, signers, nodeInfo)
+  [x] 19. onchain.rs: StorageReader trait, slot constants, decode/encode, read_gas_limit(),
+          read_signer_list(), is_signer_on_chain(), GenesisStorageReader (50+ tests)
+  [ ] 20. WIRE: PoaPayloadBuilder reads gas limit from ChainConfig at runtime    ← NEXT
+  [ ] 21. WIRE: PoaConsensus reads signer list from SignerRegistry at runtime    ← NEXT
+  [ ] 22. WIRE: StateProviderStorageReader adapter (Reth → StorageReader)        ← NEXT
+  [ ] 23. WIRE: Shared live cache (RwLock) in PoaChainSpec                       ← NEXT
+  [ ] 24. Timelock for sensitive parameter changes
 
 Phase 4 - Make It Multi-Node:                                            ~15% done
-  [ ] 19. Bootnodes with static enode URLs
-  [ ] 20. 3-signer network test
-  [ ] 21. State sync (full sync from genesis)
-  [ ] 22. Fork choice rule
-  [x] 23. Key management (--signer-key / SIGNER_KEY)
-  [ ] 24. Multi-node integration tests
+  [ ] 25. Bootnodes with static enode URLs
+  [ ] 26. 3-signer network test
+  [ ] 27. State sync (full sync from genesis)
+  [ ] 28. Fork choice rule
+  [x] 29. Key management (--signer-key / SIGNER_KEY)
+  [ ] 30. Multi-node integration tests
 
 Phase 5 - Advanced Performance (MegaETH Tier 3-4):                       0% done
-  [ ] 25. In-memory hot state cache (LRU + configurable RAM)
-  [ ] 26. Async trie hashing
-  [ ] 27. State diff sync for replica nodes
-  [ ] 28. JIT compilation for hot contracts (revmc)
-  [ ] 29. Continuous/streaming block production
-  [ ] 30. Sub-100ms blocks
+  [ ] 31. In-memory hot state cache (LRU + configurable RAM)
+  [ ] 32. Async trie hashing
+  [ ] 33. State diff sync for replica nodes
+  [ ] 34. JIT compilation for hot contracts (revmc)
+  [ ] 35. Continuous/streaming block production
+  [ ] 36. Sub-100ms blocks
 
-Phase 6 - Production & Ecosystem:                                        ~10% done
-  [x] 31. Genesis pre-deployed contracts (EntryPoint, WETH9, etc.)
-  [ ] 32. Blockscout integration
-  [ ] 33. Bridge to Ethereum mainnet
-  [ ] 34. ERC-8004 registries
-  [ ] 35. Oracle integration
-  [ ] 36. Faucet + docs + SDK
-  [ ] 37. Fusaka hardfork support
-  [ ] 38. CI/CD pipeline
-  [ ] 39. Security audit
+Phase 6 - Production & Ecosystem:                                        ~15% done
+  [x] 37. Genesis pre-deployed contracts (EntryPoint, WETH9, Multicall3, CREATE2, Safe, Governance)
+  [ ] 38. Blockscout integration
+  [ ] 39. Bridge to Ethereum mainnet
+  [ ] 40. ERC-8004 registries
+  [ ] 41. Oracle integration
+  [ ] 42. Faucet + docs + SDK
+  [ ] 43. Fusaka hardfork support
+  [ ] 44. CI/CD pipeline
+  [ ] 45. Security audit
 ```
 
 ---
 
-*Last updated: 2026-02-13 | Meowchain Custom POA on Reth*
-*Tracks: All finalized EIPs through Fusaka + planned Glamsterdam/Hegota*
+*Last updated: 2026-02-17 | Meowchain Custom POA on Reth (reth 1.11.0, rustc 1.93.1)*
+*187 tests passing | All finalized EIPs through Prague*
+*Next: Wire on-chain contract reads into payload builder & consensus (Phase 3 items 20-23)*
 *Performance targets: MegaETH-inspired optimizations for 1s blocks, 5K-10K+ TPS*
