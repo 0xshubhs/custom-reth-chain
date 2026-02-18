@@ -2,7 +2,7 @@
 
 Custom **Proof of Authority (POA)** blockchain built on [Reth](https://github.com/paradigmxyz/reth). Full Ethereum EVM compatibility — all hardforks through Prague — with POA consensus replacing the beacon chain.
 
-**Chain ID:** 9323310 | **Block time:** 2s (dev) / 12s (prod) | **Gas limit:** 30M–60M | **Tests:** 192 passing
+**Chain ID:** 9323310 | **Block time:** 2s (dev) / 12s (prod) | **Gas limit:** 30M–60M | **Tests:** 194 passing
 
 ## Quick Start
 
@@ -185,7 +185,8 @@ Mnemonic: `test test test test test test test test test test test junk`
 | `signer.rs` | 27 | Complete — in payload pipeline |
 | `payload.rs` | 12 | Complete — signs blocks in pipeline |
 | `rpc.rs` | 9 | Complete — meow_* namespace |
-| **Total** | **192** | **0 failed** |
+| `node.rs` | 8 | Complete — PoaEngineValidator bypasses alloy 32-byte extra_data limit |
+| **Total** | **194** | **0 failed** |
 
 **Next:** Performance engineering — parallel EVM (grevm), sub-second blocks, 300M+ gas limits, multi-node testing. See `md/Remaining.md` Section 12.
 

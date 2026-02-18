@@ -2758,6 +2758,7 @@ dependencies = [
  "alloy-genesis",
  "alloy-primitives",
  "alloy-rlp",
+ "alloy-rpc-types-engine",
  "alloy-signer",
  "alloy-signer-local",
  "async-trait",
