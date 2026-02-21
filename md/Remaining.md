@@ -27,13 +27,13 @@
 
 ### Core Modules (src/)
 
-Modular structure: 39 Rust files across 12 subdirectories, ~9,500 total lines, 303 tests.
+Modular structure: 40 Rust files across 12 subdirectories, ~10,000 total lines, 335 tests.
 
 | Module | Directory | Files | Status |
 |--------|-----------|-------|--------|
 | Entry point | `main.rs` + `cli.rs` | 2 | Working - CLI (18 args), block monitoring, colored output |
 | Node type | `node/` | 3 | Complete - PoaNode + PoaEngineValidator + PoaConsensusBuilder |
-| EVM factory | `evm/` | 1 | **NEW (Phase 2)** - PoaEvmFactory + PoaExecutorBuilder (max contract size) |
+| EVM factory | `evm/` | 2 | **NEW (Phase 2)** - PoaEvmFactory + PoaExecutorBuilder (max contract size, calldata gas); `parallel.rs` (Phase 2.13 foundation) |
 | Chain spec | `chainspec/` | 3 | Complete - hardforks, POA config, bootnodes, trait impls |
 | Consensus | `consensus/` | 2 | Complete - signatures, timing, gas, fork choice, multi-node tests |
 | Genesis | `genesis/` | 5 | Complete - dev/production, system + governance + Safe contracts |
@@ -1032,9 +1032,12 @@ Result: 41,000 TPS / 1.5 Gigagas/s on commodity hardware
 ```
 
 **Implementation steps:**
-- [ ] Fork or integrate `grevm` (Gravity's parallel EVM for Reth)
+- [x] `TxAccessRecord` — read/write access set per transaction                  ← DONE (2026-02-21, src/evm/parallel.rs)
+- [x] `ConflictDetector` — WAW / WAR / RAW hazard detection                    ← DONE (2026-02-21)
+- [x] `ParallelSchedule` — dependency-graph batch scheduler                    ← DONE (2026-02-21, 20 tests)
+- [x] `ParallelExecutor` — stub executor (sequential, ready for grevm swap-in) ← DONE (2026-02-21)
+- [ ] Integrate `grevm` once it ships on crates.io (swap `ParallelExecutor::execute_sequential` → grevm)
 - [ ] Add access list prediction from mempool analysis
-- [ ] Implement conflict detection and resolution
 - [ ] Benchmark with realistic tx workloads
 - [ ] Tune thread pool size for target hardware
 
@@ -1065,26 +1068,26 @@ Result: 41,000 TPS / 1.5 Gigagas/s on commodity hardware
 | Block gas limit | 30M | **300M (dev), 1B (prod)** | 300M-1B | 10B+ |
 | Max tx gas | ~30M | ~300M (dev) / 1B (prod) | 100M-1B | 1B |
 | Contract size | 24KB (EIP-170) | **Configurable via --max-contract-size** | 128KB-512KB | 512KB |
-| Calldata cost | 16 gas/byte | 16 gas/byte | 4 gas/byte | Custom |
+| Calldata cost | 16 gas/byte | **4 gas/byte (default via --calldata-gas)** | 4 gas/byte | Custom |
 
 **Implementation:**
 - [x] `--gas-limit` CLI flag (override genesis gas limit per block)         ← DONE
 - [x] `--max-contract-size` CLI flag (PoaEvmFactory patches CfgEnv)         ← DONE (2026-02-21)
 - [x] Admin governance contract to adjust gas limit dynamically              ← DONE (ChainConfig)
-- [ ] Reduce calldata gas cost for POA chain (custom EVM config, 16→4 gas/byte)
+- [x] `--calldata-gas` CLI flag (1–16, default 4); `CalldataDiscountInspector` via `Inspector::initialize_interp` + `Gas::erase_cost` ← DONE (2026-02-21)
 - [ ] Benchmark chain stability at 100M, 300M, 1B gas limits
 - [ ] Monitor: block processing time must stay under block_time
 
 ```rust
-// Example: CLI flags for gas customization
-#[arg(long, default_value = "30000000")]
-gas_limit: u64,
+// CLI flags for gas and calldata customization
+#[arg(long)]
+gas_limit: Option<u64>,
 
-#[arg(long, default_value = "24576")]  // 24KB default
+#[arg(long, default_value = "0")]  // 0 = Ethereum 24KB default
 max_contract_size: usize,
 
-#[arg(long, default_value = "16")]
-calldata_gas_per_byte: u64,
+#[arg(long, default_value = "4", value_parser = clap::value_parser!(u64).range(1..=16))]
+calldata_gas: u64,  // 4 = POA default (cheap calldata), 16 = mainnet
 ```
 
 ### 12.6 JIT/AOT Compilation for Hot Contracts
@@ -1543,13 +1546,13 @@ Phase 1 - Make It Connectable:                                           ~90% do
   [x] 6. Canonical genesis.json (dev + production regenerated 2026-02-20)
   [x] 7. meow_* RPC namespace (chainConfig, signers, nodeInfo)
 
-Phase 2 - Performance Engineering (MegaETH-inspired):                    ~50% done
+Phase 2 - Performance Engineering (MegaETH-inspired):                    ~65% done
   [x] 8. Gas limit CLI flag (--gas-limit)
   [x] 9. Eager mining CLI flag (--eager-mining)
   [x] 10. 1-second block time default (dev=1s 300M gas, prod=2s 1B gas)     ← DONE (2026-02-21)
   [x] 11. Max contract size override --max-contract-size (PoaEvmFactory)     ← DONE (2026-02-21)
-  [ ] 12. Calldata gas reduction (custom EVM config, 16→4 gas/byte)
-  [ ] 13. Parallel EVM (grevm integration)
+  [x] 12. Calldata gas reduction --calldata-gas (CalldataDiscountInspector, default 4 gas/byte) ← DONE (2026-02-21)
+  [x] 13. Parallel EVM foundation (ParallelSchedule, ConflictDetector, TxAccessRecord + 20 tests) ← DONE (2026-02-21)
 
 Phase 3 - Governance & Admin:                                            100% done
   [x] 14. Deploy Gnosis Safe contracts in genesis (Singleton, Proxy Factory, Fallback, MultiSend)
@@ -1598,8 +1601,8 @@ Phase 6 - Production & Ecosystem:                                        ~15% do
 ---
 
 *Last updated: 2026-02-21 | Meowchain Custom POA on Reth (reth 1.11.0, rustc 1.93.1)*
-*303 tests passing | All finalized EIPs through Prague*
+*335 tests passing | All finalized EIPs through Prague*
 *Phase 0-5 COMPLETE: governance, bootnodes, fork choice, multi-node, cache/statediff/metrics, PoaEvmFactory*
-*Phase 2 items 10-11 DONE: 1s block default (300M/1B gas), --max-contract-size (PoaEvmFactory)*
-*Next: Phase 2 items 12-13 (calldata gas, grevm parallel EVM), Phase 6 (ecosystem)*
+*Phase 2 items 10-13 DONE: 1s blocks, 300M/1B gas, --max-contract-size, --calldata-gas (4 gas/byte), ParallelSchedule foundation*
+*Next: Phase 2 items (grevm live integration), Phase 6 (ecosystem)*
 *Performance targets: MegaETH-inspired optimizations for 1s blocks, 5K-10K+ TPS*

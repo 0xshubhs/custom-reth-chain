@@ -216,7 +216,8 @@ async fn main() -> eyre::Result<()> {
                 .with_dev_mode(is_dev_mode)
                 .with_signer_manager(signer_manager.clone())
                 .with_cache_size(cli.cache_size)
-                .with_max_contract_size(cli.max_contract_size),
+                .with_max_contract_size(cli.max_contract_size)
+                .with_calldata_gas(cli.calldata_gas),
         )
         .extend_rpc_modules(move |ctx| {
             let meow_rpc = MeowRpc::new(rpc_chain_spec, rpc_signer_manager, rpc_dev_mode);

@@ -68,6 +68,9 @@ pub struct PoaNode {
     /// Maximum deployed contract code size override (Phase 2.11).
     /// `None` = Ethereum default (24,576 bytes).
     max_contract_size: Option<usize>,
+    /// Gas cost per non-zero calldata byte, 1–16 (Phase 2.12).
+    /// `16` = Ethereum mainnet default. `4` = POA default (cheap calldata).
+    calldata_gas_per_byte: u64,
 }
 
 impl PoaNode {
@@ -79,6 +82,7 @@ impl PoaNode {
             dev_mode: false,
             cache_size: 1024,
             max_contract_size: None,
+            calldata_gas_per_byte: 4, // POA default: cheap calldata
         }
     }
 
@@ -106,6 +110,14 @@ impl PoaNode {
     /// Any other value → enforce that limit via revm's `limit_contract_code_size`.
     pub fn with_max_contract_size(mut self, size: usize) -> Self {
         self.max_contract_size = if size == 0 { None } else { Some(size) };
+        self
+    }
+
+    /// Set the calldata gas cost per non-zero byte (Phase 2.12).
+    ///
+    /// Clamped to `[1, 16]`. `16` = Ethereum mainnet. `4` = POA default.
+    pub fn with_calldata_gas(mut self, cost: u64) -> Self {
+        self.calldata_gas_per_byte = cost.clamp(1, 16);
         self
     }
 }
@@ -146,7 +158,7 @@ where
         ComponentsBuilder::default()
             .node_types::<N>()
             .pool(EthereumPoolBuilder::default())
-            .executor(PoaExecutorBuilder::new(self.max_contract_size))
+            .executor(PoaExecutorBuilder::new(self.max_contract_size, self.calldata_gas_per_byte))
             .payload(BasicPayloadServiceBuilder::new(
                 PoaPayloadBuilderBuilder::new(
                     self.chain_spec.clone(),

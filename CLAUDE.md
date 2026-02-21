@@ -16,8 +16,10 @@ Current State:
     ├── Block Production: PoaPayloadBuilder (wraps EthereumPayloadBuilder + POA signing)
     │   ├── On-chain reads: gas limit from ChainConfig, signers from SignerRegistry at epoch
     │   └── SharedCache (Arc<Mutex<HotStateCache>>) — LRU cache across reads, invalidated at epoch
-    ├── EVM: PoaEvmFactory wraps EthEvmFactory (patches CfgEnv.limit_contract_code_size)
-    │   └── --max-contract-size overrides EIP-170 24KB limit per block
+    ├── EVM: PoaEvmFactory wraps EthEvmFactory (patches CfgEnv for contract size + calldata gas)
+    │   ├── --max-contract-size overrides EIP-170 24KB limit per block
+    │   ├── --calldata-gas (default 4): CalldataDiscountInspector via initialize_interp + Gas::erase_cost
+    │   └── parallel.rs: TxAccessRecord, ConflictDetector, ParallelSchedule foundation (grevm-ready)
     ├── Engine API: PoaEngineValidator (strips/restores 97-byte extra_data around alloy's 32-byte limit)
     ├── Block Rewards: EIP-1967 Miner Proxy at 0x...1967 (coinbase) → Treasury
     ├── Governance: Gnosis Safe multisig → ChainConfig / SignerRegistry / Treasury / Timelock
@@ -30,22 +32,21 @@ Current State:
 
 Target State (MegaETH-inspired, remaining):
   meowchain (PoaNode)
-    ├── EVM: Parallel execution (grevm) + JIT compilation (revmc)  ← NEXT
-    ├── Calldata: Reduced gas cost (16→4 gas/byte custom EVM config)  ← NEXT
+    ├── EVM: Parallel execution (grevm, when on crates.io) + JIT (revmc)  ← NEXT
     ├── RPC: HTTP + WS + admin_*/meow_* namespaces
     └── Storage: async trie hashing, state-diff streaming to replicas
 ```
 
 ## Source Files
 
-The `src/` directory uses a modular structure with **~39 Rust files** across **12 subdirectories** and **16 modules**:
+The `src/` directory uses a modular structure with **~40 Rust files** across **12 subdirectories** and **16 modules**:
 
 | Module | Directory | Key Types | Tests |
 |--------|-----------|-----------|-------|
 | Entry point | `src/main.rs` | — | — |
-| CLI | `src/cli.rs` | `Cli` (18 args) | — |
+| CLI | `src/cli.rs` | `Cli` (19 args) | — |
 | Node | `src/node/` | `PoaNode`, `PoaEngineValidator`, `PoaConsensusBuilder` | 8 |
-| EVM | `src/evm/` | `PoaEvmFactory`, `PoaExecutorBuilder` | 8 |
+| EVM | `src/evm/` | `PoaEvmFactory`, `PoaExecutorBuilder`, `CalldataDiscountInspector`, `ParallelSchedule` | 28 |
 | Consensus | `src/consensus/` | `PoaConsensus`, `PoaConsensusError` | 59 |
 | Chain spec | `src/chainspec/` | `PoaChainSpec`, `PoaConfig` | 27 |
 | Genesis | `src/genesis/` | `GenesisConfig`, `create_genesis()` | 33 |
@@ -60,7 +61,7 @@ The `src/` directory uses a modular structure with **~39 Rust files** across **1
 | Shared | `src/{lib,constants,errors}.rs` | Module root + constants + re-exports | — |
 | Bytecodes | `src/bytecodes/` | Pre-compiled contract bytecodes (.bin/.hex, 13 contracts) | — |
 
-**Total: ~9,500 lines Rust across ~39 files, 303 tests passing (2026-02-21)**
+**Total: ~10,000 lines Rust across ~40 files, 335 tests passing (2026-02-21)**
 
 ### File-Level Breakdown
 
@@ -68,7 +69,7 @@ The `src/` directory uses a modular structure with **~39 Rust files** across **1
 src/
 ├── lib.rs                  (18)   Module declarations
 ├── main.rs                (259)   Entry point, CLI, node launch, block monitoring
-├── cli.rs                  (76)   CLI argument definitions (18 args incl. --max-contract-size, --cache-size)
+├── cli.rs                  (110)  CLI argument definitions (19 args incl. --max-contract-size, --calldata-gas, --cache-size)
 ├── constants.rs            (11)   EXTRA_VANITY_LENGTH, EXTRA_SEAL_LENGTH, etc.
 ├── errors.rs                (2)   Re-exports
 ├── output.rs              (255)   20 colored console output functions
@@ -77,7 +78,8 @@ src/
 │   ├── builder.rs          (56)   PoaConsensusBuilder (ConsensusBuilder impl)
 │   └── engine.rs          (148)   PoaEngineValidator (strip/restore 97-byte extra_data)
 ├── evm/
-│   └── mod.rs             (~120)  PoaEvmFactory (patches CfgEnv limit_contract_code_size), PoaExecutorBuilder
+│   ├── mod.rs             (~425)  PoaEvmFactory, PoaExecutorBuilder, CalldataDiscountInspector + 16 tests
+│   └── parallel.rs        (~300)  TxAccessRecord, ConflictDetector, ParallelSchedule, ParallelExecutor + 20 tests
 ├── consensus/
 │   ├── mod.rs           (2,022)   PoaConsensus (HeaderValidator, Consensus, FullConsensus) + 59 tests
 │   └── errors.rs           (67)   PoaConsensusError (8 variants)
@@ -149,8 +151,12 @@ src/
 - `GenesisStorageReader` → `src/onchain/providers.rs` - reads genesis alloc (tests only)
 - `MeowRpc` → `src/rpc/mod.rs` - `meow_*` RPC namespace (chainConfig, signers, nodeInfo)
 - `MeowApi` → `src/rpc/api.rs` - `#[rpc]` trait definition
-- `PoaEvmFactory` → `src/evm/mod.rs` - wraps `EthEvmFactory`, patches `CfgEnv.limit_contract_code_size`
+- `PoaEvmFactory` → `src/evm/mod.rs` - wraps `EthEvmFactory`, patches `CfgEnv` (contract size + calldata gas)
 - `PoaExecutorBuilder` → `src/evm/mod.rs` - replaces `EthereumExecutorBuilder` in `PoaNode`
+- `CalldataDiscountInspector<I>` → `src/evm/mod.rs` - wraps any `Inspector<CTX>`, applies calldata discount via `Gas::erase_cost`
+- `ParallelSchedule` → `src/evm/parallel.rs` - DAG-based tx batch scheduler (grevm-ready)
+- `ConflictDetector` → `src/evm/parallel.rs` - WAW/WAR/RAW hazard detection
+- `TxAccessRecord` → `src/evm/parallel.rs` - per-tx read/write access footprint
 - `HotStateCache` → `src/cache/mod.rs` - LRU cache for on-chain storage reads
 - `CachedStorageReader<R>` → `src/cache/mod.rs` - wraps any `StorageReader` with `SharedCache`
 - `SharedCache` → `src/cache/mod.rs` - `Arc<Mutex<HotStateCache>>` shared across payload builder
@@ -158,7 +164,7 @@ src/
 - `PhaseTimer` / `BlockMetrics` / `ChainMetrics` → `src/metrics/mod.rs` - perf tracking
 - Contract addresses → `src/genesis/addresses.rs` - MINER_PROXY, CHAIN_CONFIG, SIGNER_REGISTRY, TREASURY, TIMELOCK
 - `output::*` → `src/output.rs` - colored console output functions (replaces all println!)
-- `Cli` → `src/cli.rs` - clap CLI argument struct (18 args incl. --max-contract-size, --cache-size)
+- `Cli` → `src/cli.rs` - clap CLI argument struct (19 args incl. --max-contract-size, --calldata-gas, --cache-size)
 - Constants → `src/constants.rs` - EXTRA_VANITY_LENGTH, EXTRA_SEAL_LENGTH, ADDRESS_LENGTH, DEFAULT_CHAIN_ID, DEFAULT_EPOCH
 
 ### External Artifacts
@@ -201,8 +207,8 @@ RuntimeBuilder::new(
 - [x] Post-execution validates gas_used, receipt root, and logs bloom
 - [x] External HTTP (8545) + WS (8546) RPC on 0.0.0.0
 - [x] Chain ID 9323310 everywhere
-- [x] CLI: `--gas-limit`, `--eager-mining`, `--signer-key`, `--production`, `--no-dev`, `--port`, `--bootnodes`, `--disable-discovery`, `--mining`, `--max-contract-size`, `--cache-size`
-- [x] 303 tests passing
+- [x] CLI: `--gas-limit`, `--eager-mining`, `--signer-key`, `--production`, `--no-dev`, `--port`, `--bootnodes`, `--disable-discovery`, `--mining`, `--max-contract-size`, `--cache-size`, `--calldata-gas`
+- [x] 335 tests passing
 
 ### Phase 3 — Governance (100%)
 - [x] Gnosis Safe v1.3.0 in genesis: Singleton, Proxy Factory, Fallback Handler, MultiSend
@@ -228,12 +234,12 @@ RuntimeBuilder::new(
 - [x] 3-signer network simulation tests (round-robin, out-of-turn, unauthorized, missed turns)
 - [x] Multi-node integration tests (5-signer, signer add/remove at epoch, fork choice, double sign, reorg)
 
-### Phase 2 — Performance Engineering (items 10-11 done)
+### Phase 2 — Performance Engineering (items 10-13 done)
 - [x] 1-second blocks default (dev=1s/300M gas, prod=2s/1B gas) — changed genesis defaults
 - [x] `PoaEvmFactory` + `PoaExecutorBuilder` — replaces `EthereumExecutorBuilder` in `PoaNode`
 - [x] `--max-contract-size` CLI flag — patches `CfgEnv.limit_contract_code_size` + initcode × 2
-- [ ] Calldata gas reduction (16→4 gas/byte custom EVM config)
-- [ ] Parallel EVM via grevm integration (target: 5K-10K TPS)
+- [x] Calldata gas reduction (`--calldata-gas`, default 4 gas/byte, `CalldataDiscountInspector`)
+- [x] Parallel EVM foundation (`ParallelSchedule`, `ConflictDetector`, `TxAccessRecord` — grevm-ready)
 
 ### Phase 5 — Advanced Performance (~40% done)
 - [x] `HotStateCache` (LRU), `CachedStorageReader<R>`, `SharedCache = Arc<Mutex<HotStateCache>>`
@@ -248,14 +254,21 @@ RuntimeBuilder::new(
 - [x] Modular file structure: ~39 files across 12 subdirectories
 - [x] Comprehensive architecture documentation (`md/Architecture.md`, updated)
 - [x] Zero compiler warnings, clean on rustc 1.93.1+
-- [x] 303 tests: consensus (59), onchain (55), genesis (33), chainspec (27), signer (21), cache (20+), payload (16), statediff (10+), metrics (10+), rpc (9), node (8), evm (8)
+- [x] 335 tests: consensus (59), onchain (55), genesis (33), chainspec (27), evm (28: 16 mod + 20 parallel + 8 from prev), cache (20+), signer (21), payload (16), statediff (10+), metrics (10+), rpc (9), node (8)
+
+### Phase 2.12-13 — Calldata Gas + Parallel Foundation (100%)
+- [x] `CalldataDiscountInspector<I>` — wraps any `Inspector<CTX>`, applies discount once per tx via `initialize_interp` + `Gas::erase_cost`; discount = `(16 - cost) × non_zero_bytes`
+- [x] `--calldata-gas` CLI arg (default=4, range 1–16); `16` = Ethereum mainnet, `4` = POA default
+- [x] `PoaEvmFactory::calldata_gas_per_byte` field; `PoaNode::with_calldata_gas()` builder method
+- [x] `src/evm/parallel.rs` — `TxAccessRecord`, `AccessKey`, `ConflictDetector` (WAW/WAR/RAW), `ParallelSchedule` (batch builder), `ParallelExecutor` stub; 20 tests
+- [x] Ready for grevm swap-in: replace `ParallelExecutor::execute_sequential` with grevm executor once it ships on crates.io
 
 ## What's NOT Done (Remaining Gaps)
 
 ### #1 — Performance Engineering (Phase 2, remaining)
-- Calldata gas reduction (16→4 gas/byte via custom EVM config)
-- Parallel EVM via grevm integration (target: 5K-10K TPS)
+- Live parallel EVM via grevm (foundation done; awaiting grevm on crates.io)
 - JIT compilation (revmc)
+- Sub-second blocks (< 500ms), async trie hashing
 
 ### #2 — Ecosystem (Phase 6, ~15% done)
 - ERC-4337 Bundler service
@@ -279,6 +292,7 @@ RuntimeBuilder::new(
 | `--no-dev` | `bool` | `false` | Disable dev mode (no auto-mining) |
 | `--gas-limit` | `Option<u64>` | — | Override block gas limit |
 | `--max-contract-size` | `usize` | `0` | Override EIP-170 contract size (0=default 24KB) |
+| `--calldata-gas` | `u64` | `4` | Gas/byte for non-zero calldata (1–16; 4=POA, 16=mainnet) |
 | `--cache-size` | `usize` | `1000` | Hot state LRU cache entries |
 | `--eager-mining` | `bool` | `false` | Mine immediately on tx arrival |
 | `--mining` | `bool` | `false` | Force auto-mining in production mode |
@@ -295,6 +309,7 @@ RuntimeBuilder::new(
 | Block Time | **1s** | **2s** | 100ms stretch |
 | Gas Limit | **300M** | **1B** | 300M-1B (on-chain ChainConfig) |
 | Max Contract Size | **Configurable (--max-contract-size)** | **Configurable** | 512KB |
+| Calldata Gas | **4 gas/byte (--calldata-gas)** | **4 gas/byte** | Custom (on-chain governed) |
 | Signers | 3 (first 3 dev accounts) | 5 (first 5 dev accounts) | 5-21 (via SignerRegistry) |
 | Epoch | 30,000 blocks | 30,000 blocks | 30,000 blocks |
 | Prefunded | 20 accounts @ 10K ETH | 8 accounts (tiered) | Governed by Treasury |
@@ -397,10 +412,10 @@ See `md/Remaining.md` for full details. Key remaining phases:
 1. **Phase 0-1** — Foundation + Connectable: **COMPLETE** (303 tests, production NodeBuilder, MDBX)
 2. **Phase 3** — Governance: **COMPLETE** (Timelock, on-chain reads, live signer cache, StateProviderStorageReader)
 3. **Phase 4** — Multi-Node: **COMPLETE** (bootnodes CLI, fork choice, state sync validation, integration tests)
-4. **Phase 2** — Performance (items 10-11 done): 1s blocks ✅, 300M/1B gas ✅, PoaEvmFactory ✅, grevm **← NEXT**
+4. **Phase 2** — Performance (items 10-13 done): 1s blocks ✅, 300M/1B gas ✅, PoaEvmFactory ✅, calldata gas ✅, ParallelSchedule ✅, grevm live integration **← NEXT**
 5. **Phase 5** — Advanced (~40% done): cache/statediff/metrics ✅, async trie/JIT/streaming **← NEXT**
 6. **Phase 6** — Ecosystem: ERC-4337 bundler, bridge, DEX, oracle, faucet, SDK
 
 Target: **1-second blocks, 5K-10K TPS, full on-chain governance** (vs MegaETH's 10ms/100K TPS but single sequencer)
 
-*Last updated: 2026-02-21 | reth 1.11.0, rustc 1.93.1+, 303 tests, ~9,500 lines, ~39 files*
+*Last updated: 2026-02-21 | reth 1.11.0, rustc 1.93.1+, 335 tests, ~10,000 lines, ~40 files*

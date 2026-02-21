@@ -93,4 +93,13 @@ pub struct Cli {
     /// Set to 0 to use the Ethereum default (24,576 bytes).
     #[arg(long, default_value = "0")]
     pub max_contract_size: usize,
+
+    /// Gas cost per non-zero calldata byte (Phase 2, range 1–16).
+    ///
+    /// Ethereum mainnet charges 16 gas/byte for non-zero calldata (EIP-2028).
+    /// A POA chain can reduce this to increase calldata-heavy throughput.
+    /// Default is 4 (same cost as zero bytes), effectively making calldata cheap.
+    /// Set to 16 to disable the discount and match Ethereum mainnet behaviour.
+    #[arg(long, default_value = "4", value_parser = clap::value_parser!(u64).range(1..=16))]
+    pub calldata_gas: u64,
 }
