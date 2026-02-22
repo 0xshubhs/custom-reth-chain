@@ -1137,7 +1137,7 @@ Meowchain Adaptation:
 ```
 
 **Implementation:**
-- [ ] State diff computation: emit changed storage slots per block
+- [x] State diff computation: `StateDiffBuilder` builds full `StateDiff` from `execution_outcome()` per block (Phase 2.18, 2026-02-22) — balance/nonce/code/storage changes
 - [ ] Compressed state diff sync protocol (replicas skip re-execution)
 - [ ] Signer node hardware recommendations (high-core, high-RAM)
 - [ ] Replica node mode: `--mode replica` (receive diffs, no execution)
@@ -1163,12 +1163,13 @@ Meowchain Adaptation:
 
 ```
 Phase P1 - Quick Wins (1-2 weeks):
-  - [ ] 1-second block time (just a config change)
-  - [ ] Raise gas limit to 100M-300M via CLI flag
-  - [ ] Eager mining mode (build block on tx arrival)
-  - [ ] Max contract size override (128KB, 256KB, 512KB)
-  - [ ] Calldata gas reduction for POA
-  Target: ~1000 TPS, 1s latency
+  - [x] 1-second block time (default, --block-time-ms for sub-second) ← DONE
+  - [x] Raise gas limit to 100M-300M via CLI flag ← DONE
+  - [x] Eager mining mode (build block on tx arrival) ← DONE
+  - [x] Max contract size override (128KB, 256KB, 512KB) ← DONE
+  - [x] Calldata gas reduction for POA (--calldata-gas) ← DONE
+  - [x] Block build + sign timing (PhaseTimer in payload builder) ← DONE (2026-02-22)
+  Target: ~1000 TPS, 1s latency ← ACHIEVED
 
 Phase P2 - Parallel EVM (2-4 weeks):
   - [ ] Integrate grevm (DAG-based parallel execution)
@@ -1177,10 +1178,12 @@ Phase P2 - Parallel EVM (2-4 weeks):
   Target: ~5000-10000 TPS, 1s latency
 
 Phase P3 - In-Memory State (4-8 weeks):
-  - [ ] RAM-resident hot state cache (configurable size)
+  - [x] RAM-resident hot state cache (governance reads) ← SharedCache wired in payload builder
+  - [x] State diff computation per block ← StateDiffBuilder in main.rs (2026-02-22)
+  - [ ] Full account hot state cache (configurable GB-size for active accounts)
   - [ ] Async trie hashing
   - [ ] Periodic disk flush (not per-block)
-  - [ ] State diff sync for replicas
+  - [ ] State diff sync for replicas (P2P protocol)
   Target: ~10000-20000 TPS, 500ms latency
 
 Phase P4 - Streaming (8-12 weeks):

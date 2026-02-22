@@ -75,7 +75,9 @@ where
         args: BuildArguments<EthPayloadBuilderAttributes, EthBuiltPayload>,
     ) -> Result<BuildOutcome<EthBuiltPayload>, PayloadBuilderError> {
         // 1. Let the inner builder construct the block (transactions, state, etc.)
+        let build_timer = PhaseTimer::start();
         let outcome = self.inner.try_build(args)?;
+        let build_ms = build_timer.elapsed_ms();
 
         // 2. Post-process: sign the block if we have a signer
         match outcome {
@@ -83,14 +85,14 @@ where
                 payload,
                 cached_reads,
             } => {
-                let signed_payload = self.sign_payload(payload)?;
+                let signed_payload = self.sign_payload(payload, build_ms)?;
                 Ok(BuildOutcome::Better {
                     payload: signed_payload,
                     cached_reads,
                 })
             }
             BuildOutcome::Freeze(payload) => {
-                let signed_payload = self.sign_payload(payload)?;
+                let signed_payload = self.sign_payload(payload, build_ms)?;
                 Ok(BuildOutcome::Freeze(signed_payload))
             }
             other => Ok(other),
@@ -108,8 +110,10 @@ where
         &self,
         config: PayloadConfig<Self::Attributes>,
     ) -> Result<EthBuiltPayload, PayloadBuilderError> {
+        let build_timer = PhaseTimer::start();
         let payload = self.inner.build_empty_payload(config)?;
-        self.sign_payload(payload)
+        let build_ms = build_timer.elapsed_ms();
+        self.sign_payload(payload, build_ms)
     }
 }
 
@@ -118,6 +122,8 @@ where
     Client: StateProviderFactory + Clone,
 {
     /// Sign a built payload with POA signature.
+    ///
+    /// `build_ms` is the wall-clock time spent building the block (Phase 2.17 timing).
     ///
     /// In dev mode, returns the payload unchanged.
     /// In production mode:
@@ -130,6 +136,7 @@ where
     fn sign_payload(
         &self,
         payload: EthBuiltPayload,
+        build_ms: u64,
     ) -> Result<EthBuiltPayload, PayloadBuilderError> {
         if self.dev_mode {
             return Ok(payload);
@@ -237,7 +244,7 @@ where
         .map_err(|e| PayloadBuilderError::Other(Box::new(e)))?;
         let sign_ms = sign_timer.elapsed_ms();
 
-        output::print_block_signed(block_number, &signer_addr, is_in_turn, sign_ms);
+        output::print_block_signed(block_number, &signer_addr, is_in_turn, build_ms, sign_ms);
 
         // Reconstruct the sealed block with the signed header
         let new_block = alloy_consensus::Block {

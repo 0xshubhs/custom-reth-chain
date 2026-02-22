@@ -6,8 +6,10 @@ use example_custom_poa_node::node::PoaNode;
 use example_custom_poa_node::output;
 use example_custom_poa_node::rpc::{MeowApiServer, MeowRpc}; // Reuse signer manager for RPC signing and block sealing
 use example_custom_poa_node::signer::{self, SignerManager};
+use example_custom_poa_node::statediff::StateDiffBuilder;
 
 use alloy_consensus::BlockHeader;
+use alloy_primitives::B256;
 use clap::Parser;
 use futures_util::StreamExt;
 use reth_db::init_db;
@@ -261,19 +263,45 @@ async fn main() -> eyre::Result<()> {
             let tx_count = block.body().transactions().count();
             let gas_used = block.header().gas_used();
 
-            // ── State diff (Phase 2.15): count accounts + storage slots changed ──
+            // ── State diff (Phase 2.18): build StateDiff from execution_outcome ──
+            // Captures balance/nonce/code + storage changes for replica sync foundation.
             let chain = notification.committed();
             let outcome = chain.execution_outcome();
-            let mut accounts_changed = 0usize;
-            let mut slots_changed = 0usize;
-            for (_addr, account) in outcome.bundle_accounts_iter() {
-                let info_changed = account.info != account.original_info;
-                let storage_n = account.storage.values().filter(|s| s.is_changed()).count();
-                if info_changed || storage_n > 0 {
-                    accounts_changed += 1;
-                    slots_changed += storage_n;
+            let block_hash: B256 = block.hash();
+            let mut diff_builder =
+                StateDiffBuilder::new(block_num, block_hash)
+                    .with_gas_used(gas_used)
+                    .with_tx_count(tx_count);
+            for (addr, account) in outcome.bundle_accounts_iter() {
+                // Account-level changes: balance, nonce, code
+                match (&account.original_info, &account.info) {
+                    (Some(old), Some(new)) => {
+                        if old.balance != new.balance {
+                            diff_builder.record_balance_change(addr, old.balance, new.balance);
+                        }
+                        if old.nonce != new.nonce {
+                            diff_builder.record_nonce_change(addr, old.nonce, new.nonce);
+                        }
+                        if old.code_hash != new.code_hash {
+                            diff_builder.record_code_change(addr);
+                        }
+                    }
+                    (None, Some(_)) => diff_builder.record_code_change(addr), // created
+                    (Some(_), None) => diff_builder.record_code_change(addr), // destroyed
+                    (None, None) => {}
+                }
+                // Storage-slot changes
+                for (slot_key, slot) in &account.storage {
+                    if slot.is_changed() {
+                        let old = B256::from(slot.previous_or_original_value.to_be_bytes::<32>());
+                        let new = B256::from(slot.present_value.to_be_bytes::<32>());
+                        diff_builder.record_storage_change(addr, *slot_key, old, new);
+                    }
                 }
             }
+            let state_diff = diff_builder.build();
+            let accounts_changed = state_diff.touched_account_count();
+            let slots_changed = state_diff.total_storage_changes();
 
             // Determine which signer should sign this block (round-robin)
             let signers = monitoring_chain_spec.signers();

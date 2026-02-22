@@ -266,19 +266,27 @@ pub fn print_epoch_refresh(block_number: u64, signer_count: usize) {
 
 /// Print when a block is signed by a POA signer.
 ///
+/// `build_ms` is the wall-clock time spent building the block (Phase 2.17 timing).
 /// `sign_ms` is the wall-clock time spent on ECDSA signing (Phase 5 timing).
-pub fn print_block_signed(block_number: u64, signer: &Address, in_turn: bool, sign_ms: u64) {
+pub fn print_block_signed(
+    block_number: u64,
+    signer: &Address,
+    in_turn: bool,
+    build_ms: u64,
+    sign_ms: u64,
+) {
     let turn = if in_turn {
         "in-turn".green()
     } else {
         "out-of-turn".yellow()
     };
     println!(
-        "  {} POA block #{} signed by {} ({}, {}ms)",
+        "  {} POA block #{} signed by {} ({}, build={}ms sign={}ms)",
         "OK".green().bold(),
         block_number.to_string().cyan(),
         format!("{signer}").cyan(),
         turn,
+        build_ms.to_string().dimmed(),
         sign_ms.to_string().dimmed(),
     );
 }

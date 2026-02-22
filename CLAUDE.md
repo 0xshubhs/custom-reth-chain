@@ -24,8 +24,8 @@ Current State:
     ├── Block Rewards: EIP-1967 Miner Proxy at 0x...1967 (coinbase) → Treasury
     ├── Governance: Gnosis Safe multisig → ChainConfig / SignerRegistry / Treasury / Timelock
     ├── Hardforks: Frontier through Prague (all active at genesis)
-    ├── Metrics: PhaseTimer, BlockMetrics, ChainMetrics (rolling window, in-turn rate)
-    ├── StateDiff: AccountDiff, StorageDiff for replica state-diff streaming
+    ├── Metrics: PhaseTimer (build + sign timing in payload builder), BlockMetrics, ChainMetrics (rolling window)
+    ├── StateDiff: StateDiffBuilder wired in main.rs — builds StateDiff from execution_outcome() per block
     ├── RPC: HTTP (8545) + WS (8546) + meow_* namespace on 0.0.0.0
     ├── P2P: Configurable bootnodes, port, discovery (--port, --bootnodes, --disable-discovery)
     └── Storage: MDBX persistent database (production NodeBuilder)
@@ -234,7 +234,7 @@ RuntimeBuilder::new(
 - [x] 3-signer network simulation tests (round-robin, out-of-turn, unauthorized, missed turns)
 - [x] Multi-node integration tests (5-signer, signer add/remove at epoch, fork choice, double sign, reorg)
 
-### Phase 2 — Performance Engineering (items 10-13 done)
+### Phase 2 — Performance Engineering (items 10-18 done)
 - [x] 1-second blocks default (dev=1s/300M gas, prod=2s/1B gas) — changed genesis defaults
 - [x] `PoaEvmFactory` + `PoaExecutorBuilder` — replaces `EthereumExecutorBuilder` in `PoaNode`
 - [x] `--max-contract-size` CLI flag — patches `CfgEnv.limit_contract_code_size` + initcode × 2
@@ -243,6 +243,8 @@ RuntimeBuilder::new(
 - [x] Sub-second block time `--block-time-ms` (500ms, 200ms, 100ms); overrides `--block-time`
 - [x] StateDiff wiring: per-block accounts+slots changed from `execution_outcome().bundle_accounts_iter()`
 - [x] Block time budget warning: fires at 3× interval (catches genuine stalls, avoids dev-mining jitter)
+- [x] Build timing (`PhaseTimer` around `inner.try_build()` in payload builder); `print_block_signed` shows `build=Xms sign=Yms` (item 17)
+- [x] Full `StateDiffBuilder` wiring in main.rs: balance/nonce/code/storage changes from `execution_outcome()` (item 18)
 
 ### Phase 5 — Advanced Performance (~40% done)
 - [x] `HotStateCache` (LRU), `CachedStorageReader<R>`, `SharedCache = Arc<Mutex<HotStateCache>>`
@@ -250,7 +252,7 @@ RuntimeBuilder::new(
 - [x] `--cache-size` CLI flag wired through `PoaNode.with_cache_size()` → `PoaPayloadBuilderBuilder`
 - [x] `StateDiff` / `AccountDiff` / `StorageDiff` for replica state-diff streaming
 - [x] `PhaseTimer` (RAII timer), `BlockMetrics`, `ChainMetrics` (rolling window, in-turn rate)
-- [x] `print_block_signed` now logs signing time in ms
+- [x] `print_block_signed` logs `build=Xms sign=Yms` (build timing wired in payload builder)
 - [ ] Async trie hashing, JIT (revmc), streaming block production, sub-100ms blocks
 
 ### Codebase Quality
@@ -416,7 +418,7 @@ See `md/Remaining.md` for full details. Key remaining phases:
 1. **Phase 0-1** — Foundation + Connectable: **COMPLETE** (303 tests, production NodeBuilder, MDBX)
 2. **Phase 3** — Governance: **COMPLETE** (Timelock, on-chain reads, live signer cache, StateProviderStorageReader)
 3. **Phase 4** — Multi-Node: **COMPLETE** (bootnodes CLI, fork choice, state sync validation, integration tests)
-4. **Phase 2** — Performance (items 10-16 done): 1s/500ms blocks ✅, 300M/1B gas ✅, calldata gas ✅, ParallelSchedule ✅, StateDiff wiring ✅, grevm live integration **← NEXT**
+4. **Phase 2** — Performance (items 10-18 done): 1s/500ms blocks ✅, 300M/1B gas ✅, calldata gas ✅, ParallelSchedule ✅, StateDiffBuilder ✅, build timing ✅, grevm live integration **← NEXT**
 5. **Phase 5** — Advanced (~40% done): cache/statediff/metrics ✅, async trie/JIT/streaming **← NEXT**
 6. **Phase 6** — Ecosystem: ERC-4337 bundler, bridge, DEX, oracle, faucet, SDK
 
