@@ -57,11 +57,11 @@ The `src/` directory uses a modular structure with **~40 Rust files** across **1
 | Cache | `src/cache/` | `HotStateCache`, `CachedStorageReader`, `SharedCache` | 20+ |
 | State diff | `src/statediff/` | `StateDiff`, `AccountDiff`, `StorageDiff` | 10+ |
 | Metrics | `src/metrics/` | `PhaseTimer`, `BlockMetrics`, `ChainMetrics` | 10+ |
-| Output | `src/output.rs` | Colored console output functions | — |
+| Output | `src/output.rs` | Colored console output + `format_interval()`, `print_block_state_diff()`, `print_block_time_budget_warning()` | 4 |
 | Shared | `src/{lib,constants,errors}.rs` | Module root + constants + re-exports | — |
 | Bytecodes | `src/bytecodes/` | Pre-compiled contract bytecodes (.bin/.hex, 13 contracts) | — |
 
-**Total: ~10,000 lines Rust across ~40 files, 335 tests passing (2026-02-21)**
+**Total: ~10,000 lines Rust across ~40 files, 339 tests passing (2026-02-22)**
 
 ### File-Level Breakdown
 
@@ -208,7 +208,7 @@ RuntimeBuilder::new(
 - [x] External HTTP (8545) + WS (8546) RPC on 0.0.0.0
 - [x] Chain ID 9323310 everywhere
 - [x] CLI: `--gas-limit`, `--eager-mining`, `--signer-key`, `--production`, `--no-dev`, `--port`, `--bootnodes`, `--disable-discovery`, `--mining`, `--max-contract-size`, `--cache-size`, `--calldata-gas`
-- [x] 335 tests passing
+- [x] 339 tests passing
 
 ### Phase 3 — Governance (100%)
 - [x] Gnosis Safe v1.3.0 in genesis: Singleton, Proxy Factory, Fallback Handler, MultiSend
@@ -240,6 +240,9 @@ RuntimeBuilder::new(
 - [x] `--max-contract-size` CLI flag — patches `CfgEnv.limit_contract_code_size` + initcode × 2
 - [x] Calldata gas reduction (`--calldata-gas`, default 4 gas/byte, `CalldataDiscountInspector`)
 - [x] Parallel EVM foundation (`ParallelSchedule`, `ConflictDetector`, `TxAccessRecord` — grevm-ready)
+- [x] Sub-second block time `--block-time-ms` (500ms, 200ms, 100ms); overrides `--block-time`
+- [x] StateDiff wiring: per-block accounts+slots changed from `execution_outcome().bundle_accounts_iter()`
+- [x] Block time budget warning: fires at 3× interval (catches genuine stalls, avoids dev-mining jitter)
 
 ### Phase 5 — Advanced Performance (~40% done)
 - [x] `HotStateCache` (LRU), `CachedStorageReader<R>`, `SharedCache = Arc<Mutex<HotStateCache>>`
@@ -293,6 +296,7 @@ RuntimeBuilder::new(
 | `--gas-limit` | `Option<u64>` | — | Override block gas limit |
 | `--max-contract-size` | `usize` | `0` | Override EIP-170 contract size (0=default 24KB) |
 | `--calldata-gas` | `u64` | `4` | Gas/byte for non-zero calldata (1–16; 4=POA, 16=mainnet) |
+| `--block-time-ms` | `u64` | `0` | Sub-second block interval in ms (0=use --block-time; e.g. 500) |
 | `--cache-size` | `usize` | `1000` | Hot state LRU cache entries |
 | `--eager-mining` | `bool` | `false` | Mine immediately on tx arrival |
 | `--mining` | `bool` | `false` | Force auto-mining in production mode |
@@ -412,10 +416,10 @@ See `md/Remaining.md` for full details. Key remaining phases:
 1. **Phase 0-1** — Foundation + Connectable: **COMPLETE** (303 tests, production NodeBuilder, MDBX)
 2. **Phase 3** — Governance: **COMPLETE** (Timelock, on-chain reads, live signer cache, StateProviderStorageReader)
 3. **Phase 4** — Multi-Node: **COMPLETE** (bootnodes CLI, fork choice, state sync validation, integration tests)
-4. **Phase 2** — Performance (items 10-13 done): 1s blocks ✅, 300M/1B gas ✅, PoaEvmFactory ✅, calldata gas ✅, ParallelSchedule ✅, grevm live integration **← NEXT**
+4. **Phase 2** — Performance (items 10-16 done): 1s/500ms blocks ✅, 300M/1B gas ✅, calldata gas ✅, ParallelSchedule ✅, StateDiff wiring ✅, grevm live integration **← NEXT**
 5. **Phase 5** — Advanced (~40% done): cache/statediff/metrics ✅, async trie/JIT/streaming **← NEXT**
 6. **Phase 6** — Ecosystem: ERC-4337 bundler, bridge, DEX, oracle, faucet, SDK
 
 Target: **1-second blocks, 5K-10K TPS, full on-chain governance** (vs MegaETH's 10ms/100K TPS but single sequencer)
 
-*Last updated: 2026-02-21 | reth 1.11.0, rustc 1.93.1+, 335 tests, ~10,000 lines, ~40 files*
+*Last updated: 2026-02-22 | reth 1.11.0, rustc 1.93.1+, 339 tests, ~10,000 lines, ~40 files*

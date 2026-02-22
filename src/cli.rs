@@ -94,6 +94,20 @@ pub struct Cli {
     #[arg(long, default_value = "0")]
     pub max_contract_size: usize,
 
+    /// Sub-second block production interval in milliseconds (Phase 2.14).
+    ///
+    /// When set to a non-zero value, overrides `--block-time` with millisecond precision.
+    /// Enables 500ms, 200ms, or even 100ms blocks on fast hardware.
+    ///
+    /// Examples:
+    ///   `--block-time-ms 500`   → 500ms blocks (2 blocks/s)
+    ///   `--block-time-ms 200`   → 200ms blocks (5 blocks/s)
+    ///   `--block-time-ms 100`   → 100ms blocks (10 blocks/s)
+    ///
+    /// Set to 0 (default) to use the `--block-time` value in seconds.
+    #[arg(long, default_value = "0")]
+    pub block_time_ms: u64,
+
     /// Gas cost per non-zero calldata byte (Phase 2, range 1–16).
     ///
     /// Ethereum mainnet charges 16 gas/byte for non-zero calldata (EIP-2028).

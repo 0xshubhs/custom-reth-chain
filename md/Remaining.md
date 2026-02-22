@@ -27,7 +27,7 @@
 
 ### Core Modules (src/)
 
-Modular structure: 40 Rust files across 12 subdirectories, ~10,000 total lines, 335 tests.
+Modular structure: 40 Rust files across 12 subdirectories, ~10,000 total lines, 339 tests.
 
 | Module | Directory | Files | Status |
 |--------|-----------|-------|--------|
@@ -989,16 +989,15 @@ POA eliminates the two biggest bottlenecks in Ethereum performance:
 | **10ms blocks** (MegaETH-level) | — | Full MegaETH architecture: streaming EVM, node specialization, in-memory everything | Very High |
 
 **Implementation plan for 1-second blocks:**
-```rust
-// Already supported - just run:
+```bash
+# 1s blocks (default dev):
 cargo run --release -- --block-time 1
 
-// For sub-second (500ms), modify DevArgs:
-DevArgs {
-    dev: true,
-    block_time: Some(Duration::from_millis(500)),
-    ..Default::default()
-}
+# 500ms blocks (Phase 2.14):
+cargo run --release -- --block-time-ms 500
+
+# 200ms blocks:
+cargo run --release -- --block-time-ms 200
 ```
 
 **For 100ms+ blocks (advanced):**
@@ -1546,13 +1545,16 @@ Phase 1 - Make It Connectable:                                           ~90% do
   [x] 6. Canonical genesis.json (dev + production regenerated 2026-02-20)
   [x] 7. meow_* RPC namespace (chainConfig, signers, nodeInfo)
 
-Phase 2 - Performance Engineering (MegaETH-inspired):                    ~65% done
+Phase 2 - Performance Engineering (MegaETH-inspired):                    ~80% done
   [x] 8. Gas limit CLI flag (--gas-limit)
   [x] 9. Eager mining CLI flag (--eager-mining)
   [x] 10. 1-second block time default (dev=1s 300M gas, prod=2s 1B gas)     ← DONE (2026-02-21)
   [x] 11. Max contract size override --max-contract-size (PoaEvmFactory)     ← DONE (2026-02-21)
   [x] 12. Calldata gas reduction --calldata-gas (CalldataDiscountInspector, default 4 gas/byte) ← DONE (2026-02-21)
   [x] 13. Parallel EVM foundation (ParallelSchedule, ConflictDetector, TxAccessRecord + 20 tests) ← DONE (2026-02-21)
+  [x] 14. Sub-second block time --block-time-ms (500ms, 200ms, 100ms blocks) ← DONE (2026-02-22)
+  [x] 15. StateDiff wiring: emit accounts/slots changed per block from execution_outcome() ← DONE (2026-02-22)
+  [x] 16. Block time budget warning: fire if block arrives > 3× interval    ← DONE (2026-02-22)
 
 Phase 3 - Governance & Admin:                                            100% done
   [x] 14. Deploy Gnosis Safe contracts in genesis (Singleton, Proxy Factory, Fallback, MultiSend)
@@ -1601,8 +1603,8 @@ Phase 6 - Production & Ecosystem:                                        ~15% do
 ---
 
 *Last updated: 2026-02-21 | Meowchain Custom POA on Reth (reth 1.11.0, rustc 1.93.1)*
-*335 tests passing | All finalized EIPs through Prague*
+*339 tests passing | All finalized EIPs through Prague*
 *Phase 0-5 COMPLETE: governance, bootnodes, fork choice, multi-node, cache/statediff/metrics, PoaEvmFactory*
-*Phase 2 items 10-13 DONE: 1s blocks, 300M/1B gas, --max-contract-size, --calldata-gas (4 gas/byte), ParallelSchedule foundation*
-*Next: Phase 2 items (grevm live integration), Phase 6 (ecosystem)*
-*Performance targets: MegaETH-inspired optimizations for 1s blocks, 5K-10K+ TPS*
+*Phase 2 items 10-16 DONE: 1s/sub-second blocks, 300M/1B gas, max-contract-size, calldata-gas, ParallelSchedule, StateDiff wiring, budget warning*
+*Next: grevm live integration, revmc JIT, Phase 6 (ecosystem)*
+*Performance targets: MegaETH-inspired optimizations for 500ms-1s blocks, 5K-10K+ TPS*

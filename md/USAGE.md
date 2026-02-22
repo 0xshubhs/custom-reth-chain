@@ -6,7 +6,7 @@ Custom POA blockchain on Reth. Chain ID **9323310**, all hardforks through Pragu
 
 ```
 custom-reth-chain-/
-├── src/                            # Rust source code (~10,000 lines, 40 files, 335 tests)
+├── src/                            # Rust source code (~10,000 lines, 40 files, 339 tests)
 │   ├── main.rs                     # Entry point, block monitoring
 │   ├── lib.rs                      # Library root (module declarations)
 │   ├── cli.rs                      # Cli struct (clap args)
@@ -122,6 +122,8 @@ Options:
   --gas-limit <N>             Override block gas limit (e.g., 300000000 for 300M)
   --max-contract-size <BYTES> Override EIP-170 24KB contract size limit (e.g., 524288 for 512KB)
   --calldata-gas <N>          Gas per non-zero calldata byte [1-16, default: 4] (4=POA, 16=mainnet)
+  --block-time-ms <MS>        Sub-second block interval in ms [default: 0 = use --block-time]
+                              Examples: 500 (2/s), 200 (5/s), 100 (10/s)
   --cache-size <N>            Hot state cache entries [default: 1000]
   --eager-mining              Mine immediately on tx arrival instead of interval
   --port <PORT>               P2P listener port [default: 30303]

@@ -8,17 +8,38 @@ use alloy_primitives::Address;
 use colored::Colorize;
 use std::fmt;
 use std::path::Path;
+use std::time::Duration;
+
+// ── Helpers ────────────────────────────────────────────────────────
+
+/// Format a block interval Duration as a human-readable string.
+///
+/// - Sub-second values → `"500ms"`
+/// - Integer seconds → `"1s"`
+/// - Fractional seconds → `"1.5s"` (rare, from non-round ms values)
+pub fn format_interval(d: Duration) -> String {
+    let ms = d.as_millis();
+    if ms < 1000 {
+        format!("{ms}ms")
+    } else if ms % 1000 == 0 {
+        format!("{}s", d.as_secs())
+    } else {
+        format!("{:.1}s", d.as_secs_f64())
+    }
+}
 
 // ── Banner & Identity ──────────────────────────────────────────────
 
 /// Print the startup banner with chain identity.
-pub fn print_banner(chain_id: u64, block_period: u64) {
+///
+/// `mining_interval` is the effective block production interval (may be sub-second).
+pub fn print_banner(chain_id: u64, mining_interval: Duration) {
     println!();
     println!("{}", "=== Meowchain POA Node ===".blue().bold());
     println!("  Chain ID:     {}", chain_id.to_string().cyan());
     println!(
-        "  Block period: {} seconds",
-        block_period.to_string().cyan()
+        "  Block period: {}",
+        format_interval(mining_interval).cyan()
     );
 }
 
@@ -167,16 +188,18 @@ pub fn print_prefunded(accounts: &[Address]) {
     }
 }
 
-/// Print chain data storage info and block period.
-pub fn print_chain_data(datadir: &Path, block_period: u64) {
+/// Print chain data storage info and effective block interval.
+///
+/// `mining_interval` is the effective block production interval (may be sub-second).
+pub fn print_chain_data(datadir: &Path, mining_interval: Duration) {
     println!();
     println!(
         "  Chain data stored in: {}",
         datadir.display().to_string().dimmed()
     );
     println!(
-        "  Blocks produced every {} seconds (POA interval mining)",
-        block_period.to_string().cyan()
+        "  Blocks produced every {} (POA interval mining)",
+        format_interval(mining_interval).cyan()
     );
 }
 
@@ -304,4 +327,67 @@ pub fn print_block_observed(block_num: u64, tx_count: usize, expected: &Address)
         tx_count.to_string().cyan(),
         format!("{expected}").dimmed(),
     );
+}
+
+/// Print per-block state diff summary (Phase 2.15): accounts and slots changed.
+///
+/// Only printed when there are non-trivial changes (e.g. blocks with transactions).
+/// Empty blocks always change at least 1 account (coinbase), so those are filtered
+/// by the caller with `if tx_count > 0`.
+pub fn print_block_state_diff(block_num: u64, accounts_changed: usize, slots_changed: usize) {
+    println!(
+        "  {} Block #{}: {} accounts, {} storage slots changed",
+        "~".dimmed(),
+        block_num.to_string().dimmed(),
+        accounts_changed.to_string().cyan(),
+        slots_changed.to_string().cyan(),
+    );
+}
+
+/// Print a warning when block processing time is approaching the block interval.
+///
+/// Fires when `elapsed_ms >= 80% of interval_ms`.
+pub fn print_block_time_budget_warning(block_num: u64, elapsed_ms: u64, interval_ms: u64) {
+    println!(
+        "  {} Block #{}: processing took {}ms (budget: {}ms — {:.0}% used)",
+        "WARN".yellow().bold(),
+        block_num.to_string().cyan(),
+        elapsed_ms.to_string().yellow(),
+        interval_ms.to_string().dimmed(),
+        elapsed_ms as f64 / interval_ms as f64 * 100.0,
+    );
+}
+
+// ── Tests ───────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_format_interval_sub_second() {
+        assert_eq!(format_interval(Duration::from_millis(500)), "500ms");
+        assert_eq!(format_interval(Duration::from_millis(100)), "100ms");
+        assert_eq!(format_interval(Duration::from_millis(200)), "200ms");
+    }
+
+    #[test]
+    fn test_format_interval_whole_seconds() {
+        assert_eq!(format_interval(Duration::from_secs(1)), "1s");
+        assert_eq!(format_interval(Duration::from_secs(2)), "2s");
+        assert_eq!(format_interval(Duration::from_secs(12)), "12s");
+    }
+
+    #[test]
+    fn test_format_interval_fractional_seconds() {
+        // 1500ms = 1.5s
+        let d = Duration::from_millis(1500);
+        let s = format_interval(d);
+        assert!(s.contains("1.5"), "expected 1.5s, got {s}");
+    }
+
+    #[test]
+    fn test_format_interval_zero() {
+        assert_eq!(format_interval(Duration::ZERO), "0ms");
+    }
 }

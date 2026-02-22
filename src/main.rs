@@ -24,7 +24,7 @@ use reth_network_peers::TrustedPeer;
 use std::{
     net::{IpAddr, Ipv4Addr},
     sync::Arc,
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 /// Main entry point for the POA node
@@ -71,7 +71,14 @@ async fn main() -> eyre::Result<()> {
 
     let chain_spec_arc = Arc::new(poa_chain.clone());
 
-    output::print_banner(poa_chain.inner().chain.id(), poa_chain.block_period());
+    // Effective mining interval: --block-time-ms overrides --block-time when non-zero (Phase 2.14).
+    let mining_interval = if cli.block_time_ms > 0 {
+        Duration::from_millis(cli.block_time_ms)
+    } else {
+        Duration::from_secs(poa_chain.block_period())
+    };
+
+    output::print_banner(poa_chain.inner().chain.id(), mining_interval);
     let mode_str = match (is_dev_mode, cli.mining) {
         (true, _) => "dev",
         (false, true) => "production+mining",
@@ -111,7 +118,7 @@ async fn main() -> eyre::Result<()> {
             block_time: if cli.eager_mining {
                 None // Mine immediately on tx arrival
             } else {
-                Some(Duration::from_secs(poa_chain.block_period()))
+                Some(mining_interval)
             },
             block_max_transactions: None,
             ..Default::default()
@@ -238,14 +245,35 @@ async fn main() -> eyre::Result<()> {
     let monitoring_chain_spec = chain_spec_arc.clone();
     let monitoring_signer_manager = signer_manager.clone();
     let monitoring_metrics = chain_metrics.clone();
+    let monitoring_interval = mining_interval;
     tokio::spawn(async move {
         let mut block_stream = node.provider.canonical_state_stream();
+        // Track wall-clock arrival time for block-time budget monitoring (Phase 2.16).
+        let mut last_block_arrived = Instant::now();
 
         while let Some(notification) = block_stream.next().await {
+            let arrived = Instant::now();
+            let elapsed_ms = last_block_arrived.elapsed().as_millis() as u64;
+            last_block_arrived = arrived;
+
             let block = notification.tip();
             let block_num = block.header().number();
             let tx_count = block.body().transactions().count();
             let gas_used = block.header().gas_used();
+
+            // ── State diff (Phase 2.15): count accounts + storage slots changed ──
+            let chain = notification.committed();
+            let outcome = chain.execution_outcome();
+            let mut accounts_changed = 0usize;
+            let mut slots_changed = 0usize;
+            for (_addr, account) in outcome.bundle_accounts_iter() {
+                let info_changed = account.info != account.original_info;
+                let storage_n = account.storage.values().filter(|s| s.is_changed()).count();
+                if info_changed || storage_n > 0 {
+                    accounts_changed += 1;
+                    slots_changed += storage_n;
+                }
+            }
 
             // Determine which signer should sign this block (round-robin)
             let signers = monitoring_chain_spec.signers();
@@ -272,13 +300,27 @@ async fn main() -> eyre::Result<()> {
                 }
             }
 
+            // Print state diff when there are transactions (Phase 2.15).
+            if tx_count > 0 {
+                output::print_block_state_diff(block_num, accounts_changed, slots_changed);
+            }
+
+            // Block time budget warning: fire if a block arrives > 3× the expected
+            // interval (Phase 2.16). 3× threshold avoids false positives from normal
+            // Reth dev-mining timer jitter (~2× is common at sub-second intervals).
+            // Skip block 1 (first arrival time is not meaningful).
+            let interval_ms = monitoring_interval.as_millis() as u64;
+            if block_num > 1 && interval_ms > 0 && elapsed_ms > interval_ms * 3 {
+                output::print_block_time_budget_warning(block_num, elapsed_ms, interval_ms);
+            }
+
             // Record block metrics (Phase 5)
             let block_metrics = BlockMetrics {
                 block_number: block_num,
                 tx_count,
                 gas_used,
-                build_duration: std::time::Duration::ZERO, // actual timing requires payload hook
-                sign_duration: std::time::Duration::ZERO,
+                build_duration: Duration::ZERO, // actual timing requires payload hook
+                sign_duration: Duration::ZERO,
                 in_turn,
             };
             monitoring_metrics.record_block(&block_metrics);
@@ -299,7 +341,7 @@ async fn main() -> eyre::Result<()> {
     // Print prefunded accounts
     let accounts = genesis::dev_accounts();
     output::print_prefunded(&accounts[..5.min(accounts.len())]);
-    output::print_chain_data(&cli.datadir, poa_chain.block_period());
+    output::print_chain_data(&cli.datadir, mining_interval);
     output::print_running(&cli.http_addr, cli.http_port, &cli.ws_addr, cli.ws_port);
 
     // Keep the node running
