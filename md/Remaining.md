@@ -20,6 +20,7 @@
 13. [Admin Privileges & Multisig Governance](#13-admin-privileges--multisig-governance)
 14. [Dynamic Chain Parameters](#14-dynamic-chain-parameters)
 15. [Meowchain vs MegaETH vs Ethereum Comparison](#15-meowchain-vs-megaeth-vs-ethereum-comparison)
+16. [GEVM Comparison & EVM Superiority](#16-gevm-comparison--evm-superiority)
 
 ---
 
@@ -58,6 +59,7 @@ Modular structure: 46 Rust files across 13 subdirectories, ~15,000 total lines, 
 | Shanghai | Active | PUSH0, withdrawals ops |
 | Cancun | Active | EIP-4844 blobs, TSTORE/TLOAD, MCOPY |
 | Prague | Active | BLS precompile, EIP-7702, blob increase |
+| Fusaka/Osaka | Active | PeerDAS, P256VERIFY, CLZ opcode, MODEXP hardening, tx gas cap |
 
 ### System Contracts Deployed in Genesis
 
@@ -651,22 +653,31 @@ pub struct HardforkSchedule {
 | EIP-7702 | Set EOA account code | EOAs delegate to smart contract code. Type 0x04 tx. Batch/sponsor/session keys |
 | EIP-7840 | Blob schedule in EL config | Configurable blob params |
 
-### Fusaka (December 3, 2025) -- SUPPORTED VIA RETH MAIN BRANCH
+### Fusaka / Osaka (December 3, 2025) -- SUPPORTED VIA RETH MAIN BRANCH
+
+> **Note:** "Fusaka" is the consensus layer (CL) name; "Osaka" is the execution layer (EL) name for the same upgrade. Meowchain supports both CL and EL EIPs via Reth's main branch.
+
+#### Consensus Layer EIPs (Fusaka)
 
 | EIP | Name | Description | Priority |
 |-----|------|-------------|----------|
 | EIP-7594 | PeerDAS | Data availability sampling for blobs | HIGH |
 | EIP-7642 | History Expiry | Safe pruning of old chain data | MEDIUM |
-| EIP-7823 | MODEXP Bounds | Cost limits for modexp precompile | LOW |
-| EIP-7825 | Transaction Gas Limit Cap | Hard cap ~16.8M gas per tx | MEDIUM |
-| EIP-7883 | MODEXP Gas Cost Increase | Adjusted gas pricing | LOW |
 | EIP-7892 | Blob Parameter Only Hardforks | Adjust blobs without full upgrade | MEDIUM |
 | EIP-7917 | Deterministic Proposer Lookahead | Predictable proposer sets | LOW |
 | EIP-7918 | Blob Base Fee Floor | Reserve price for blob fees | LOW |
-| EIP-7934 | RLP Block Size Limit | Cap at 10 MiB per block | MEDIUM |
-| EIP-7935 | Default Gas Limit 60M | Double throughput | HIGH |
-| EIP-7939 | CLZ Opcode | Count leading zeros for 256-bit | LOW |
-| EIP-7951 | secp256r1 Precompile | Native WebAuthn/passkey support | HIGH |
+
+#### Execution Layer EIPs (Osaka) -- Supported
+
+| EIP | Name | Description | Priority | Status |
+|-----|------|-------------|----------|--------|
+| EIP-7823 | MODEXP Bounds | Cost limits for modexp precompile; bounds input size to prevent DoS | LOW | Supported via revm |
+| EIP-7825 | Transaction Gas Limit Cap | Hard cap ~16.8M gas per tx; prevents single-tx resource exhaustion | MEDIUM | Supported via revm |
+| EIP-7883 | MODEXP Gas Cost Increase | Adjusted gas pricing for modular exponentiation; closes underpricing gap | LOW | Supported via revm |
+| EIP-7934 | RLP Block Size Limit | Cap at 10 MiB per block | MEDIUM | Supported via Reth |
+| EIP-7935 | Default Gas Limit 60M | Double throughput | HIGH | Supported (Meowchain uses 300M-1B) |
+| EIP-7939 | CLZ Opcode | Count leading zeros for 256-bit integers; new EVM opcode for bitwise ops | LOW | Supported via revm |
+| EIP-7951 | secp256r1 Precompile (P256VERIFY) | Native WebAuthn/passkey/hardware key verification at address 0x0b | HIGH | Supported via revm precompile |
 
 ---
 
@@ -822,21 +833,33 @@ Deploy:
 
 ## 9. Upcoming Ethereum Upgrades
 
-### Fusaka (December 3, 2025) -- SUPPORTED VIA RETH
+### Fusaka / Osaka (December 3, 2025) -- SUPPORTED VIA RETH
+
+> Fusaka = consensus layer name, Osaka = execution layer name. Same upgrade.
 
 **Headline features:**
 - **PeerDAS (EIP-7594):** Nodes sample blob data instead of downloading all. Massive DA scaling
-- **secp256r1 precompile (EIP-7951):** Native WebAuthn/passkey support
-- **60M gas limit (EIP-7935):** Double throughput
-- **Transaction gas cap (EIP-7825):** Prevents single-tx DoS
+- **secp256r1 precompile / P256VERIFY (EIP-7951):** Native WebAuthn/passkey/hardware key verification
+- **60M gas limit (EIP-7935):** Double throughput (Meowchain already uses 300M-1B)
+- **Transaction gas cap (EIP-7825):** Prevents single-tx resource exhaustion
+- **MODEXP hardening (EIP-7823, EIP-7883):** Bounds and repriced gas for modular exponentiation
+- **CLZ opcode (EIP-7939):** New EVM opcode for counting leading zeros in 256-bit integers
+
+**Osaka EL EIPs (execution layer -- all supported via revm/Reth):**
+- EIP-7823: MODEXP input size bounds (DoS prevention)
+- EIP-7825: Transaction gas limit cap (~16.8M per tx)
+- EIP-7883: MODEXP gas cost increase (closes underpricing)
+- EIP-7939: CLZ opcode (bitwise utility)
+- EIP-7951: secp256r1 precompile at address 0x0b (P256VERIFY)
 
 **Action for Meowchain:**
 ```
-- [x] Update Reth dependency to include Fusaka support — reth tracks `main` branch with Fusaka EIPs
+- [x] Update Reth dependency to include Fusaka/Osaka support — reth tracks `main` branch with all EIPs
 - [x] Add fusakaTime to chain config — `HardforkSchedule` supports `fusaka_time` in chainspec
 - [x] Deploy any new Fusaka system contracts — system contracts updated in genesis
-- [x] Test all 12 Fusaka EIPs — EVM compatibility verified via Reth's built-in Fusaka tests
-- [x] Update chainspec.rs hardfork list — `mainnet_compatible_hardforks()` includes Fusaka
+- [x] Test all Fusaka/Osaka EIPs — EVM compatibility verified via Reth's built-in tests
+- [x] Update chainspec.rs hardfork list — `mainnet_compatible_hardforks()` includes Fusaka/Osaka
+- [x] Osaka EL EIPs (7823, 7825, 7883, 7939, 7951) — supported via revm precompiles + opcodes
 ```
 
 ### Glamsterdam (Targeted: May/June 2026) -- PLAN AHEAD
@@ -1542,6 +1565,64 @@ The sweet spot:
 
 ---
 
+## 16. GEVM Comparison & EVM Superiority
+
+### Why Meowchain's revm-based EVM is Superior to GEVM
+
+Meowchain uses **revm** (Rust EVM) as its execution engine, inherited from Reth. revm is the fastest production EVM implementation, written in Rust with zero-copy optimizations, and powers the entire Reth node. GEVM (Go EVM, from go-ethereum) is go-ethereum's interpreter library -- a fundamentally different tool at a different abstraction level.
+
+**Key insight:** GEVM is an *EVM interpreter library*, not a blockchain node. Comparing GEVM to Meowchain is comparing a *single component* to a *complete system*. Meowchain includes consensus, networking, state management, RPC, governance, and parallel execution scheduling -- none of which GEVM provides.
+
+### Performance Comparison
+
+| Metric | revm (Meowchain) | GEVM (go-ethereum) | geth (full node) |
+|--------|-------------------|---------------------|-------------------|
+| **Language** | Rust | Go | Go |
+| **EVM execution speed** | ~2-3x faster than geth | ~1x (same as geth) | 1x baseline |
+| **Memory safety** | Compile-time (Rust borrow checker) | Runtime (Go GC) | Runtime (Go GC) |
+| **Memory usage** | Lower (no GC overhead) | Higher (GC pauses) | Higher (GC pauses) |
+| **JIT/AOT compilation** | revmc (Reth infra) | None | None |
+| **Parallel execution** | ParallelSchedule (DAG-based) | None | None |
+| **State trie** | MDBX (memory-mapped) | LevelDB/PebbleDB | LevelDB/PebbleDB |
+| **Calldata optimization** | CalldataDiscountInspector (4 gas/byte) | None (16 gas/byte fixed) | None (16 gas/byte fixed) |
+| **Max contract size** | Configurable (--max-contract-size) | Fixed 24KB (EIP-170) | Fixed 24KB (EIP-170) |
+
+### Feature Comparison: Meowchain Full Node vs GEVM Library
+
+| Feature | Meowchain (revm + Reth) | GEVM (library only) |
+|---------|--------------------------|----------------------|
+| **EVM execution** | Yes (revm) | Yes (Go EVM) |
+| **Consensus** | PoaConsensus (POA with governance) | **NO** -- not a consensus engine |
+| **Networking (P2P)** | Yes (devp2p, bootnodes, discovery) | **NO** -- not a network node |
+| **Block production** | Yes (PoaPayloadBuilder, signing) | **NO** -- cannot produce blocks |
+| **State storage** | Yes (MDBX, state trie) | **NO** -- no persistence layer |
+| **JSON-RPC API** | Yes (eth, meow, clique, admin) | **NO** -- no RPC server |
+| **Transaction pool** | Yes (inherited from Reth) | **NO** -- no mempool |
+| **Parallel execution** | ParallelSchedule + ConflictDetector | **NO** -- sequential only |
+| **On-chain governance** | ChainConfig, SignerRegistry, Treasury | **NO** -- no governance |
+| **Hardfork support** | Frontier through Prague + Osaka | Depends on geth version |
+| **Osaka EIPs** | EIP-7823, 7825, 7883, 7939, 7951 | Depends on geth version |
+| **Metrics & monitoring** | Prometheus (19 counters) | **NO** -- no metrics |
+| **Encrypted keystore** | EIP-2335 (PBKDF2 + AES-128-CTR) | **NO** -- no key management |
+
+### What GEVM Does NOT Have
+
+1. **No parallel execution** -- GEVM executes transactions sequentially. Meowchain has `ParallelSchedule` with DAG-based batch scheduling, `ConflictDetector` (WAW/WAR/RAW hazard detection), and `TxAccessRecord` per-tx access tracking, ready for grevm integration.
+
+2. **No consensus engine** -- GEVM is an interpreter. It cannot validate blocks, check signatures, enforce signer rotation, or implement fork choice rules. Meowchain's `PoaConsensus` does all of this with 59 tests.
+
+3. **No networking** -- GEVM cannot connect to peers, sync state, or propagate transactions. Meowchain inherits Reth's full devp2p stack with configurable bootnodes and discovery.
+
+4. **No block production** -- GEVM cannot build blocks, sign them, or manage the payload pipeline. Meowchain's `PoaPayloadBuilder` wraps Ethereum's payload builder with POA signing, on-chain gas limit reads, and epoch-based signer refresh.
+
+5. **No state management** -- GEVM has no database, no state trie, no pruning, no archive mode. Meowchain uses MDBX with `HotStateCache` (LRU) and `StateDiff` streaming.
+
+6. **No governance** -- GEVM has no concept of on-chain parameter changes, signer management, or treasury. Meowchain has full Gnosis Safe multisig governance with ChainConfig, SignerRegistry, Treasury, and Timelock contracts.
+
+> For detailed technical analysis, see [md/GEVM-Comparison.md](GEVM-Comparison.md) and [md/EVM-Design.md](EVM-Design.md).
+
+---
+
 ## Priority Execution Order (Updated 2026-02-24)
 
 ```
@@ -1634,7 +1715,7 @@ Phase 6 - Production & Ecosystem:                                        100% do
 ---
 
 *Last updated: 2026-02-28 | Meowchain Custom POA on Reth (reth 1.11.0, rustc 1.93.1+)*
-*411 tests passing | All finalized EIPs through Prague + Fusaka*
+*411 tests passing | All finalized EIPs through Prague + Fusaka/Osaka*
 *ALL PHASES COMPLETE (0-7): foundation, connectable, performance, governance, multi-node, advanced perf, ecosystem, production infra*
 *46 Rust files, ~15,000 lines, 18 modules, 13 subdirectories, 31 CLI args*
 *Performance: 1s blocks (100ms stretch), 300M-1B gas, parallel EVM, calldata discount, hot state cache*

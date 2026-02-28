@@ -303,6 +303,9 @@ where
 // ─── Tests ────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
+mod bench;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use alloy_evm::EvmEnv;
