@@ -4,8 +4,8 @@ use alloy_primitives::{Address, Keccak256, B256, U256};
 ///
 /// For `address[] public signers` at slot 1:
 ///   base = keccak256(abi.encode(1))
-///   signers[0] lives at base + 0
-///   signers[1] lives at base + 1
+///   signers\[0\] lives at base + 0
+///   signers\[1\] lives at base + 1
 ///   etc.
 pub fn dynamic_array_base_slot(array_slot: U256) -> U256 {
     let mut hasher = Keccak256::new();

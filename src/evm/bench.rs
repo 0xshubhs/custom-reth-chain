@@ -143,35 +143,38 @@ mod tests {
 
     /// Build a TxEnv for a simple ETH transfer.
     fn simple_transfer_tx(to: Address, value: U256) -> TxEnv {
-        let mut tx = TxEnv::default();
-        tx.caller = Address::from([0xAAu8; 20]);
-        tx.kind = TxKind::Call(to);
-        tx.value = value;
-        tx.gas_limit = 21_000;
-        tx.gas_price = 1;
-        tx
+        TxEnv {
+            caller: Address::from([0xAAu8; 20]),
+            kind: TxKind::Call(to),
+            value,
+            gas_limit: 21_000,
+            gas_price: 1,
+            ..Default::default()
+        }
     }
 
     /// Build a TxEnv for a contract call with given data.
     fn contract_call_tx(to: Address, data: Bytes, gas_limit: u64) -> TxEnv {
-        let mut tx = TxEnv::default();
-        tx.caller = Address::from([0xAAu8; 20]);
-        tx.kind = TxKind::Call(to);
-        tx.data = data;
-        tx.gas_limit = gas_limit;
-        tx.gas_price = 1;
-        tx
+        TxEnv {
+            caller: Address::from([0xAAu8; 20]),
+            kind: TxKind::Call(to),
+            data,
+            gas_limit,
+            gas_price: 1,
+            ..Default::default()
+        }
     }
 
     /// Build a TxEnv for contract creation.
     fn create_tx(initcode: Bytes, gas_limit: u64) -> TxEnv {
-        let mut tx = TxEnv::default();
-        tx.caller = Address::from([0xAAu8; 20]);
-        tx.kind = TxKind::Create;
-        tx.data = initcode;
-        tx.gas_limit = gas_limit;
-        tx.gas_price = 1;
-        tx
+        TxEnv {
+            caller: Address::from([0xAAu8; 20]),
+            kind: TxKind::Create,
+            data: initcode,
+            gas_limit,
+            gas_price: 1,
+            ..Default::default()
+        }
     }
 
     // ── EVM Opcodes (assembled as raw bytecode) ────────────────────────────
@@ -199,7 +202,7 @@ mod tests {
             0x50, // POP       (discard quotient)
             0x80, // DUP1
             0x61, iter_hi, iter_lo, // PUSH2 iterations
-            0x10, // LT        (counter < iterations)
+            0x10,    // LT        (counter < iterations)
             0x60, 0x02, // PUSH1 2  (loop offset)
             0x57, // JUMPI
             0x00, // STOP
@@ -230,7 +233,7 @@ mod tests {
             0x50, // POP       discard loaded value
             0x80, // DUP1
             0x61, iter_hi, iter_lo, // PUSH2 iterations
-            0x10, // LT
+            0x10,    // LT
             0x60, 0x02, // PUSH1 2
             0x57, // JUMPI
             0x00, // STOP
@@ -326,7 +329,7 @@ mod tests {
         code.push(0x60);
         code.push(sstore_loop as u8);
         code.push(0x57); // JUMPI
-        // POP (discard counter)
+                         // POP (discard counter)
         code.push(0x50);
 
         // -- Phase 2: SLOAD loop --
@@ -344,7 +347,7 @@ mod tests {
         code.push(0x80);
         code.push(0x54); // SLOAD
         code.push(0x50); // POP (discard loaded value)
-        // DUP1; PUSH2 iter; LT; PUSH1 loop; JUMPI
+                         // DUP1; PUSH2 iter; LT; PUSH1 loop; JUMPI
         code.push(0x80);
         code.push(0x61);
         code.push(iter_hi);
@@ -353,7 +356,7 @@ mod tests {
         code.push(0x60);
         code.push(sload_loop as u8);
         code.push(0x57); // JUMPI
-        // POP; STOP
+                         // POP; STOP
         code.push(0x50);
         code.push(0x00);
 
@@ -434,7 +437,7 @@ mod tests {
 
         assert_eq!(code.len(), header_len as usize);
         // Runtime code: STOP repeated to fill the target size.
-        code.extend(std::iter::repeat(0x00u8).take(target_size));
+        code.extend(std::iter::repeat_n(0x00u8, target_size));
         Bytes::from(code)
     }
 
@@ -709,10 +712,7 @@ mod tests {
         println!("  Runs:           {RUNS}");
         println!("  Total time:     {elapsed:?}");
         println!("  Per run:        {per_run_us:.2} us");
-        println!(
-            "  Per keccak:     {:.4} us",
-            per_run_us / iterations as f64
-        );
+        println!("  Per keccak:     {:.4} us", per_run_us / iterations as f64);
         println!("  ---");
         println!("  GEVM reference:  ~0.3-1.0 us per KECCAK256 (32 bytes)");
         println!("  geth reference:  ~1.0-3.0 us per KECCAK256 (32 bytes)");
@@ -1078,10 +1078,7 @@ mod tests {
             large_conflicts, 0,
             "disjoint large addresses should never conflict"
         );
-        assert_eq!(
-            waw_found, CONFLICT_ITERS,
-            "WAW pair should always conflict"
-        );
+        assert_eq!(waw_found, CONFLICT_ITERS, "WAW pair should always conflict");
 
         // Performance: each check should be well under 100 us even for large sets
         // (debug builds are ~5-10x slower than release).
@@ -1146,7 +1143,9 @@ mod tests {
 
         // -- Benchmark: Keccak (500 iter loop) --
         let keccak_bytecode = keccak_loop_bytecode(500);
-        let db_keccak = db_base.clone().with_code(Bytecode::new_raw(keccak_bytecode));
+        let db_keccak = db_base
+            .clone()
+            .with_code(Bytecode::new_raw(keccak_bytecode));
         let keccak_runs = 200u32;
         let start = Instant::now();
         for _ in 0..keccak_runs {

@@ -57,7 +57,7 @@ use reth_ethereum_forks::Hardforks;
 ///
 /// Ethereum's intrinsic gas deducts **16 gas per non-zero calldata byte** (EIP-2028)
 /// before execution starts.  A POA chain can effectively reduce this by adding back
-/// the difference via [`Gas::erase_cost`] inside [`Inspector::initialize_interp`].
+/// the difference via `Gas::erase_cost` inside [`Inspector::initialize_interp`].
 ///
 /// The discount is applied only **once per EVM instance** (tracked by `discount_applied`).
 /// Because reth creates a fresh `EthEvmFactory` call — and therefore a fresh
@@ -261,7 +261,7 @@ impl EvmFactory for PoaEvmFactory {
 
 /// Custom executor builder that uses [`PoaEvmFactory`] for EVM creation.
 ///
-/// Plugged into [`PoaNode::components_builder`] in place of
+/// Plugged into `PoaNode::components_builder` in place of
 /// `EthereumExecutorBuilder`.  Passes through both `max_contract_size`
 /// and `calldata_gas_per_byte` to the factory.
 #[derive(Debug, Clone)]
