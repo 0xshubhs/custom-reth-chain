@@ -12,8 +12,7 @@ services:
         POSTGRES_USER: 'blockscout'
         POSTGRES_PASSWORD: 'ceWb1MeLBEeOIfk65gU8EjF8'
     ports:
-      - target: 5432
-        published: ${POSTGRES_PORT:-7432}
+      - "127.0.0.1:${POSTGRES_PORT:-7432}:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U blockscout -d blockscout"]
       interval: 10s
@@ -40,8 +39,7 @@ services:
     #     ETHEREUM_JSONRPC_WS_URL: ws://host.docker.internal:8545/
     #     CHAIN_ID: '1337'
     ports:
-      - target: 4000
-        published: ${BACKEND_PORT:-4000}
+      - "127.0.0.1:${BACKEND_PORT:-4000}:4000"
     volumes:
       - type: bind
         source: ./genesis.json
@@ -58,5 +56,4 @@ services:
     env_file:
       -  ./common-frontend.env
     ports:
-      - target: 3000
-        published: ${FRONTEND_PORT:-3000}
+      - "127.0.0.1:${FRONTEND_PORT:-3001}:3000"
