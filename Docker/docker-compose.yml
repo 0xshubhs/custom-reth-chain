@@ -2,8 +2,8 @@ services:
   # POA Node - Custom Reth Chain
   poa-node:
     build:
-      context: .
-      dockerfile: Dockerfile
+      context: ..
+      dockerfile: Docker/Dockerfile
     container_name: poa-node
     restart: unless-stopped
     ports:
