@@ -43,7 +43,9 @@ pub fn decode_address(value: B256) -> Address {
 /// u64 value occupies the last 8 bytes (bytes 24–31).
 #[inline]
 pub fn decode_u64(value: B256) -> u64 {
-    u64::from_be_bytes(value[24..32].try_into().expect("slice is exactly 8 bytes"))
+    let mut bytes = [0u8; 8];
+    bytes.copy_from_slice(&value[24..32]);
+    u64::from_be_bytes(bytes)
 }
 
 /// Decode a bool from a B256 storage value.

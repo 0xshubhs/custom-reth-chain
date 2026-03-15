@@ -81,7 +81,7 @@ impl BlockSealer {
         }
 
         let sig_bytes = &extra_data[extra_data.len() - EXTRA_SEAL_LENGTH..];
-        let signature = bytes_to_signature(sig_bytes).map_err(SignerError::SigningFailed)?;
+        let signature = bytes_to_signature(sig_bytes)?;
 
         signature
             .recover_address_from_prehash(&seal_hash)
@@ -100,13 +100,14 @@ pub fn signature_to_bytes(sig: &Signature) -> [u8; 65] {
 }
 
 /// Convert bytes to a signature
-pub fn bytes_to_signature(bytes: &[u8]) -> Result<Signature, String> {
+pub fn bytes_to_signature(bytes: &[u8]) -> Result<Signature, SignerError> {
     if bytes.len() != 65 {
-        return Err(format!(
+        return Err(SignerError::SigningFailed(format!(
             "Invalid signature length: expected 65, got {}",
             bytes.len()
-        ));
+        )));
     }
 
-    Signature::try_from(bytes).map_err(|e| format!("Invalid signature: {}", e))
+    Signature::try_from(bytes)
+        .map_err(|e| SignerError::SigningFailed(format!("Invalid signature: {}", e)))
 }

@@ -68,7 +68,12 @@ use reth_ethereum_forks::Hardforks;
 /// - `calldata_gas_per_byte = 4`  → discount `12 × non_zero_bytes` gas, making
 ///   non-zero bytes as cheap as zero bytes.
 /// - `calldata_gas_per_byte = 1`  → near-free calldata, maximises throughput.
-#[derive(Debug, Clone)]
+///
+/// # Note on `Clone`
+/// This type is intentionally **not** `Clone`.  It is created once per EVM instance
+/// (i.e. per transaction) and discarded afterwards; cloning it would be a logic error
+/// because the `discount_applied` flag would be copied in a potentially stale state.
+#[derive(Debug)]
 pub struct CalldataDiscountInspector<I> {
     inner: I,
     /// Replacement cost per non-zero calldata byte (1–16 gas).

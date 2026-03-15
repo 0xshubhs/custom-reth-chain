@@ -168,22 +168,53 @@ where
             }
         }
 
-        // Use effective_signers (live on-chain if available, else genesis config).
-        // Compute in_turn_signer directly from the returned slice to avoid a
-        // second read-lock acquisition that expected_signer() would require.
-        let signers = self.chain_spec.effective_signers();
-        if signers.is_empty() {
-            // No signers configured, return unsigned
-            return Ok(payload);
+        // Extract only what's needed synchronously under a single read-lock
+        // acquisition.  `with_effective_signers` passes `&[Address]` to the
+        // closure without cloning the Vec.
+        struct SignerPrep {
+            in_turn_signer: Address,
+            extra_data_bytes: Bytes,
         }
 
-        // Determine which signer should sign this block (round-robin)
-        let in_turn_signer = signers[(block_number as usize) % signers.len()];
+        let prep: Option<SignerPrep> = self.chain_spec.with_effective_signers(|signers| {
+            if signers.is_empty() {
+                return None;
+            }
+            let in_turn_signer = signers[(block_number as usize) % signers.len()];
+
+            // Build extra_data buffer while we still hold the lock so we read
+            // the signer list only once.
+            let cap = EXTRA_VANITY_LENGTH
+                + if is_epoch { signers.len() * 20 } else { 0 }
+                + EXTRA_SEAL_LENGTH;
+            let mut extra_data = Vec::with_capacity(cap);
+            extra_data.extend_from_slice(&[0u8; EXTRA_VANITY_LENGTH]);
+            if is_epoch {
+                for s in signers.iter() {
+                    extra_data.extend_from_slice(s.as_slice());
+                }
+            }
+            extra_data.extend_from_slice(&[0u8; EXTRA_SEAL_LENGTH]);
+
+            Some(SignerPrep {
+                in_turn_signer,
+                extra_data_bytes: Bytes::from(extra_data),
+            })
+        });
+
+        let SignerPrep {
+            in_turn_signer,
+            extra_data_bytes,
+        } = match prep {
+            Some(p) => p,
+            None => return Ok(payload), // No signers configured, return unsigned
+        };
 
         // Find a signer we control and seal the header in a single block_in_place call.
         // This avoids two separate thread-park/unpark cycles per block.
         let handle = tokio::runtime::Handle::current();
         let signer_manager = &self.signer_manager;
+        let chain_spec = &self.chain_spec;
 
         // Clone header and body from the built block
         let mut header = block.header().clone();
@@ -192,42 +223,32 @@ where
         // Difficulty must be 0 for Engine API compatibility.
         header.difficulty = U256::ZERO;
 
-        // Build extra_data with POA format
-        let mut extra_data = Vec::with_capacity(
-            EXTRA_VANITY_LENGTH + if is_epoch { signers.len() * 20 } else { 0 } + EXTRA_SEAL_LENGTH,
-        );
-
-        // Vanity (32 zero bytes)
-        extra_data.extend_from_slice(&[0u8; EXTRA_VANITY_LENGTH]);
-
-        // At epoch blocks, embed the effective (live) signer list
-        if is_epoch {
-            for signer in signers.iter() {
-                extra_data.extend_from_slice(signer.as_slice());
-            }
-        }
-
-        // Placeholder for signature (65 bytes — will be replaced by seal_header)
-        extra_data.extend_from_slice(&[0u8; EXTRA_SEAL_LENGTH]);
-        header.extra_data = Bytes::from(extra_data);
+        // Apply pre-built extra_data (vanity + [epoch signers] + sig placeholder)
+        header.extra_data = extra_data_bytes;
 
         // Single block_in_place: find signer + seal header
         let sign_timer = PhaseTimer::start();
         let (signed_header, signer_addr, is_in_turn) = tokio::task::block_in_place(|| {
             handle.block_on(async {
-                // Prefer in-turn signer if we have it
+                // Fast path: we have the in-turn signer key — no Vec clone needed.
                 let (signer_addr, is_in_turn) =
                     if signer_manager.has_signer(&in_turn_signer).await {
                         (in_turn_signer, true)
-                    } else if let Some(addr) = signer_manager.first_signer_in(&signers).await
-                    {
-                        (addr, false)
                     } else {
-                        return Ok((header, Address::ZERO, false));
+                        // Slow path (out-of-turn or signer key missing): clone the
+                        // signer list once to pass to `first_signer_in`.
+                        // This branch runs rarely — normal operation is in-turn.
+                        let all_signers =
+                            chain_spec.with_effective_signers(<[Address]>::to_vec);
+                        if let Some(addr) = signer_manager.first_signer_in(&all_signers).await {
+                            (addr, false)
+                        } else {
+                            return Ok((header, Address::ZERO, false));
+                        }
                     };
 
-                // Seal the header with the selected signer
-                let sealer = BlockSealer::new(signer_manager.clone());
+                // Seal the header with the selected signer.
+                let sealer = BlockSealer::new(Arc::clone(signer_manager));
                 let signed_header = sealer
                     .seal_header(header, &signer_addr)
                     .await

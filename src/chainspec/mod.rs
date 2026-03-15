@@ -99,6 +99,8 @@ impl PoaChainSpec {
     ///
     /// Updated by `PoaPayloadBuilder` at every epoch block after reading `SignerRegistry`.
     /// `PoaConsensus` and block production both use this to respect live governance changes.
+    ///
+    /// Prefer `with_effective_signers` on hot paths to avoid a `Vec` clone.
     pub fn effective_signers(&self) -> Vec<Address> {
         if let Ok(guard) = self.live_signers.read() {
             if let Some(ref v) = *guard {
@@ -106,6 +108,24 @@ impl PoaChainSpec {
             }
         }
         self.poa_config.signers.clone()
+    }
+
+    /// Execute `f` with a borrow of the effective signer slice without cloning.
+    ///
+    /// Holds the read lock only for the duration of `f`.  Use this on the
+    /// per-block hot path instead of `effective_signers()` to avoid allocating
+    /// a `Vec<Address>` every block.
+    #[inline]
+    pub fn with_effective_signers<F, R>(&self, f: F) -> R
+    where
+        F: FnOnce(&[Address]) -> R,
+    {
+        if let Ok(guard) = self.live_signers.read() {
+            if let Some(ref v) = *guard {
+                return f(v.as_slice());
+            }
+        }
+        f(&self.poa_config.signers)
     }
 
     /// Update the live signer list from the on-chain SignerRegistry contract.

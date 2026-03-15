@@ -26,6 +26,8 @@ use std::sync::Arc;
 // These functions are called only on error paths.  Marking them `#[cold]`
 // tells the compiler and branch predictor that the enclosing success path is
 // the common case, improving instruction-cache locality on the hot path.
+// `#[inline(never)]` keeps the error-construction code out of the hot function
+// body entirely, shrinking its instruction footprint.
 
 #[cold]
 #[inline(never)]
@@ -37,6 +39,24 @@ fn cold_extra_data_too_short(expected: usize, got: usize) -> PoaConsensusError {
 #[inline(never)]
 fn cold_invalid_signature() -> PoaConsensusError {
     PoaConsensusError::InvalidSignature
+}
+
+#[cold]
+#[inline(never)]
+fn cold_unauthorized_signer(signer: Address) -> PoaConsensusError {
+    PoaConsensusError::UnauthorizedSigner { signer }
+}
+
+#[cold]
+#[inline(never)]
+fn cold_invalid_difficulty() -> PoaConsensusError {
+    PoaConsensusError::InvalidDifficulty
+}
+
+#[cold]
+#[inline(never)]
+fn cold_timestamp_too_early(timestamp: u64, parent_timestamp: u64) -> PoaConsensusError {
+    PoaConsensusError::TimestampTooEarly { timestamp, parent_timestamp }
 }
 
 /// POA Consensus implementation
@@ -134,7 +154,7 @@ impl PoaConsensus {
     #[inline]
     pub fn validate_signer(&self, signer: &Address) -> Result<(), PoaConsensusError> {
         if !self.chain_spec.is_authorized_signer(signer) {
-            return Err(PoaConsensusError::UnauthorizedSigner { signer: *signer });
+            return Err(cold_unauthorized_signer(*signer));
         }
         Ok(())
     }
@@ -157,7 +177,7 @@ impl PoaConsensus {
         _signer: &Address,
     ) -> Result<(), PoaConsensusError> {
         if header.difficulty != U256::ZERO {
-            return Err(PoaConsensusError::InvalidDifficulty);
+            return Err(cold_invalid_difficulty());
         }
 
         Ok(())
@@ -188,11 +208,14 @@ impl PoaConsensus {
         let num_signers = signers_data_len / ADDRESS_LENGTH;
         let mut signers = Vec::with_capacity(num_signers);
 
-        for i in 0..num_signers {
-            let start = EXTRA_VANITY_LENGTH + i * ADDRESS_LENGTH;
-            let end = start + ADDRESS_LENGTH;
-            let address = Address::from_slice(&extra_data[start..end]);
-            signers.push(address);
+        // `chunks_exact` gives the compiler a stronger alignment/stride guarantee
+        // than manual index arithmetic, enabling better auto-vectorisation for the
+        // address-copy loop.  The slice is already checked to be a multiple of
+        // ADDRESS_LENGTH (20 bytes) above, so `remainder()` will always be empty.
+        let signers_slice =
+            &extra_data[EXTRA_VANITY_LENGTH..EXTRA_VANITY_LENGTH + signers_data_len];
+        for chunk in signers_slice.chunks_exact(ADDRESS_LENGTH) {
+            signers.push(Address::from_slice(chunk));
         }
 
         Ok(signers)
@@ -303,11 +326,7 @@ impl HeaderValidator<Header> for PoaConsensus {
         // Validate timestamp (must be after parent + minimum period)
         let min_timestamp = p.timestamp() + self.chain_spec.block_period();
         if h.timestamp() < min_timestamp {
-            return Err(PoaConsensusError::TimestampTooEarly {
-                timestamp: h.timestamp(),
-                parent_timestamp: p.timestamp(),
-            }
-            .into());
+            return Err(cold_timestamp_too_early(h.timestamp(), p.timestamp()).into());
         }
 
         // Validate gas limit changes (EIP-1559 compatible)

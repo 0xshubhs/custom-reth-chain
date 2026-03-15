@@ -110,10 +110,7 @@ async fn main() -> eyre::Result<()> {
     } else if is_dev_mode {
         // In dev mode, load dev signers (first 3 keys)
         for key in signer::dev::DEV_PRIVATE_KEYS.iter().take(3) {
-            signer_manager
-                .add_signer_from_hex(key)
-                .await
-                .expect("Dev keys should be valid");
+            signer_manager.add_signer_from_hex(key).await?;
         }
         output::print_dev_signers_loaded(signer_manager.signer_addresses().await.len());
     } else {
