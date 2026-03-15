@@ -210,12 +210,6 @@ where
             None => return Ok(payload), // No signers configured, return unsigned
         };
 
-        // Find a signer we control and seal the header in a single block_in_place call.
-        // This avoids two separate thread-park/unpark cycles per block.
-        let handle = tokio::runtime::Handle::current();
-        let signer_manager = &self.signer_manager;
-        let chain_spec = &self.chain_spec;
-
         // Clone header and body from the built block
         let mut header = block.header().clone();
         let body = block.body().clone();
@@ -226,42 +220,35 @@ where
         // Apply pre-built extra_data (vanity + [epoch signers] + sig placeholder)
         header.extra_data = extra_data_bytes;
 
-        // Single block_in_place: find signer + seal header
-        let sign_timer = PhaseTimer::start();
-        let (signed_header, signer_addr, is_in_turn) = tokio::task::block_in_place(|| {
-            handle.block_on(async {
-                // Fast path: we have the in-turn signer key — no Vec clone needed.
-                let (signer_addr, is_in_turn) =
-                    if signer_manager.has_signer(&in_turn_signer).await {
-                        (in_turn_signer, true)
-                    } else {
-                        // Slow path (out-of-turn or signer key missing): clone the
-                        // signer list once to pass to `first_signer_in`.
-                        // This branch runs rarely — normal operation is in-turn.
-                        let all_signers =
-                            chain_spec.with_effective_signers(<[Address]>::to_vec);
-                        if let Some(addr) = signer_manager.first_signer_in(&all_signers).await {
-                            (addr, false)
-                        } else {
-                            return Ok((header, Address::ZERO, false));
-                        }
-                    };
+        // Signer lookup is sync (std::sync::RwLock in SignerManager): fast path
+        // checks the in-turn key, slow path scans the full authorized list.
+        let (signer_addr, is_in_turn) = if self.signer_manager.has_signer(&in_turn_signer) {
+            (in_turn_signer, true)
+        } else {
+            // Slow path: clone the signer list once to scan for any key we hold.
+            // This branch runs rarely — normal operation is in-turn.
+            let all_signers = self.chain_spec.with_effective_signers(<[Address]>::to_vec);
+            match self.signer_manager.first_signer_in(&all_signers) {
+                Some(addr) => (addr, false),
+                None => return Ok(payload), // No authorized signer key available
+            }
+        };
 
-                // Seal the header with the selected signer.
+        // Only the ECDSA signing itself requires block_in_place: seal_header calls
+        // the async alloy Signer trait. The signer lookup above is fully sync.
+        let handle = tokio::runtime::Handle::current();
+        let signer_manager = &self.signer_manager;
+
+        let sign_timer = PhaseTimer::start();
+        let signed_header = tokio::task::block_in_place(|| {
+            handle.block_on(async {
                 let sealer = BlockSealer::new(Arc::clone(signer_manager));
-                let signed_header = sealer
+                sealer
                     .seal_header(header, &signer_addr)
                     .await
-                    .map_err(|e| PayloadBuilderError::Other(Box::new(e)))?;
-
-                Ok::<_, PayloadBuilderError>((signed_header, signer_addr, is_in_turn))
+                    .map_err(|e| PayloadBuilderError::Other(Box::new(e)))
             })
         })?;
-
-        if signer_addr == Address::ZERO {
-            // No authorized signer key available, return unsigned
-            return Ok(payload);
-        }
 
         let sign_ms = sign_timer.elapsed_ms();
 
@@ -311,7 +298,7 @@ mod tests {
 
         // Block 1 should be signed by signer at index 1 % 3 = 1
         let expected_signer = signers[1];
-        assert!(manager.has_signer(&expected_signer).await);
+        assert!(manager.has_signer(&expected_signer));
 
         // Verify the sealer can sign a header
         let sealer = BlockSealer::new(manager.clone());
@@ -476,7 +463,7 @@ mod tests {
 
         // Sign a block header with the first authorized signer
         let signer_addr = signers[0];
-        assert!(manager.has_signer(&signer_addr).await);
+        assert!(manager.has_signer(&signer_addr));
 
         let header = Header {
             number: 1,

@@ -7,9 +7,8 @@ use crate::chainspec::PoaChainSpec;
 use crate::signer::SignerManager;
 use jsonrpsee::{core::RpcResult, proc_macros::rpc};
 use reth_chainspec::EthChainSpec;
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 use std::time::Instant;
-use tokio::sync::RwLock;
 
 use super::admin_types::*;
 
@@ -141,7 +140,7 @@ impl AdminApiServer for AdminRpc {
     }
 
     async fn peers(&self) -> RpcResult<Vec<AdminPeerInfo>> {
-        let state = self.peer_state.read().await;
+        let state = self.peer_state.read().unwrap();
         Ok(state.peers.clone())
     }
 
@@ -157,7 +156,7 @@ impl AdminApiServer for AdminRpc {
             None => return Ok(false),
         };
 
-        let mut state = self.peer_state.write().await;
+        let mut state = self.peer_state.write().unwrap();
 
         // Don't add duplicates
         if state.peers.iter().any(|p| p.enode == enode) {
@@ -183,16 +182,16 @@ impl AdminApiServer for AdminRpc {
     }
 
     async fn remove_peer(&self, enode: String) -> RpcResult<bool> {
-        let mut state = self.peer_state.write().await;
+        let mut state = self.peer_state.write().unwrap();
         let len_before = state.peers.len();
         state.peers.retain(|p| p.enode != enode);
         Ok(state.peers.len() < len_before)
     }
 
     async fn health(&self) -> RpcResult<HealthStatus> {
-        let local_signers = self.signer_manager.signer_addresses().await;
+        let local_signers = self.signer_manager.signer_addresses();
         let authorized_signers = self.chain_spec.effective_signers();
-        let peer_count = self.peer_state.read().await.peers.len();
+        let peer_count = self.peer_state.read().unwrap().peers.len();
         let uptime = self.start_time.elapsed().as_secs();
 
         // A node is an active signer if any of its local signers are in the authorized set.
@@ -457,7 +456,6 @@ mod tests {
         // Add an authorized signer
         manager
             .add_signer_from_hex(crate::signer::dev::DEV_PRIVATE_KEYS[0])
-            .await
             .unwrap();
 
         let rpc = make_rpc(chain, manager, false);

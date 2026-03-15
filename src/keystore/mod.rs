@@ -232,7 +232,7 @@ impl KeystoreManager {
     }
 
     /// Load a key from keystore and add it to the signer manager.
-    pub async fn load_into_signer_manager(
+    pub fn load_into_signer_manager(
         &self,
         address: &Address,
         password: &str,
@@ -241,7 +241,6 @@ impl KeystoreManager {
         let key_hex = self.decrypt_key(address, password)?;
         signer_manager
             .add_signer_from_hex(&key_hex)
-            .await
             .map_err(|e| eyre::eyre!("Failed to add signer: {}", e))?;
         Ok(())
     }
@@ -786,14 +785,13 @@ mod tests {
         let address = manager.import_key(TEST_KEY, TEST_PASSWORD).unwrap();
 
         let signer_manager = SignerManager::new();
-        assert!(!signer_manager.has_signer(&address).await);
+        assert!(!signer_manager.has_signer(&address));
 
         manager
             .load_into_signer_manager(&address, TEST_PASSWORD, &signer_manager)
-            .await
             .unwrap();
 
-        assert!(signer_manager.has_signer(&address).await);
+        assert!(signer_manager.has_signer(&address));
 
         // Verify the loaded signer can sign
         let hash = alloy_primitives::B256::ZERO;

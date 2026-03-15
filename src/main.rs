@@ -105,14 +105,14 @@ async fn main() -> eyre::Result<()> {
 
     if let Some(key) = &cli.signer_key {
         // Load signer key from CLI/environment
-        let addr = signer_manager.add_signer_from_hex(key).await?;
+        let addr = signer_manager.add_signer_from_hex(key)?;
         output::print_signer_loaded(&addr);
     } else if is_dev_mode {
         // In dev mode, load dev signers (first 3 keys)
         for key in signer::dev::DEV_PRIVATE_KEYS.iter().take(3) {
-            signer_manager.add_signer_from_hex(key).await?;
+            signer_manager.add_signer_from_hex(key)?;
         }
-        output::print_dev_signers_loaded(signer_manager.signer_addresses().await.len());
+        output::print_dev_signers_loaded(signer_manager.signer_addresses().len());
     } else {
         output::print_no_signer_warning();
     }
@@ -482,8 +482,7 @@ async fn main() -> eyre::Result<()> {
             // The clone is cheap: ≤21 signers × 20 bytes = ≤420 bytes.
             let effective = monitoring_chain_spec.effective_signers();
             let our_signer = monitoring_signer_manager
-                .first_signer_in(&effective)
-                .await;
+                .first_signer_in(&effective);
             let in_turn = our_signer == Some(expected_signer);
 
             // Check if we have the key for the expected signer

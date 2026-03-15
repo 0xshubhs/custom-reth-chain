@@ -78,13 +78,6 @@ mod tests {
             self
         }
 
-        #[allow(dead_code)]
-        fn with_storage(mut self, slots: Vec<(U256, U256)>) -> Self {
-            for (k, v) in slots {
-                self.storage.insert(k, v);
-            }
-            self
-        }
     }
 
     /// Minimal error type for the benchmark DB.

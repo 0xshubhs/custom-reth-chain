@@ -3,7 +3,6 @@ use std::sync::Arc;
 
 use super::manager::SignerManager;
 
-/// Private keys for the dev accounts (from "test test..." mnemonic)
 pub const DEV_PRIVATE_KEYS: &[&str] = &[
     "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
     "59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d",
@@ -17,24 +16,20 @@ pub const DEV_PRIVATE_KEYS: &[&str] = &[
     "2a871d0798f97d79848a013d4936a73bf4cc922c825d33c1cf7073dff6d409c6",
 ];
 
-/// Set up the signer manager with dev keys
-pub async fn setup_dev_signers() -> Arc<SignerManager> {
+/// Sync helper — preferred in non-async tests.
+pub fn setup_dev_signers_sync() -> Arc<SignerManager> {
     let manager = Arc::new(SignerManager::new());
-
     for key in DEV_PRIVATE_KEYS.iter().take(3) {
-        // Use first 3 as default signers
-        manager
-            .add_signer_from_hex(key)
-            .await
-            .expect("Dev keys should be valid");
+        manager.add_signer_from_hex(key).expect("Dev keys should be valid");
     }
-
     manager
 }
 
-/// Get the first dev signer for testing
+/// Async wrapper retained for tests that run inside a tokio runtime.
+pub async fn setup_dev_signers() -> Arc<SignerManager> {
+    setup_dev_signers_sync()
+}
+
 pub fn first_dev_signer() -> PrivateKeySigner {
-    DEV_PRIVATE_KEYS[0]
-        .parse()
-        .expect("First dev key should be valid")
+    DEV_PRIVATE_KEYS[0].parse().expect("First dev key should be valid")
 }

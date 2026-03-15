@@ -194,11 +194,18 @@ impl StateDiff {
 /// The inner `changes` map is pre-allocated for
 /// `INITIAL_ACCOUNT_CAPACITY` entries to avoid rehashing during the
 /// hot per-block path.
+///
+/// Field layout notes:
+///   - `changes` is placed first because every `record_*` call touches it;
+///     keeping it at offset 0 maximises cache-line locality on the hot path.
+///   - `block_number`, `block_hash`, `gas_used`, and `tx_count` are set once
+///     at construction / teardown and are therefore cold relative to `changes`.
 #[derive(Debug, Default)]
 pub struct StateDiffBuilder {
+    /// Per-account changes — the most frequently accessed field.
+    changes: HashMap<Address, AccountDiff>,
     block_number: u64,
     block_hash: B256,
-    changes: HashMap<Address, AccountDiff>,
     gas_used: u64,
     tx_count: usize,
 }
@@ -222,9 +229,9 @@ impl StateDiffBuilder {
     /// Pre-allocates internal maps to reduce rehashing on the hot path.
     pub fn new(block_number: u64, block_hash: B256) -> Self {
         Self {
+            changes: HashMap::with_capacity(INITIAL_ACCOUNT_CAPACITY),
             block_number,
             block_hash,
-            changes: HashMap::with_capacity(INITIAL_ACCOUNT_CAPACITY),
             gas_used: 0,
             tx_count: 0,
         }
@@ -278,16 +285,6 @@ impl StateDiffBuilder {
         }
     }
 
-    /// Set gas used after building incrementally.
-    pub fn set_gas_used(&mut self, gas: u64) {
-        self.gas_used = gas;
-    }
-
-    /// Set tx count after building incrementally.
-    pub fn set_tx_count(&mut self, count: usize) {
-        self.tx_count = count;
-    }
-
     /// Consume the builder and produce the final [`StateDiff`].
     pub fn build(self) -> StateDiff {
         StateDiff {
@@ -297,12 +294,6 @@ impl StateDiffBuilder {
             gas_used: self.gas_used,
             tx_count: self.tx_count,
         }
-    }
-
-    /// Number of accounts with recorded changes so far.
-    #[inline]
-    pub fn touched_accounts(&self) -> usize {
-        self.changes.len()
     }
 }
 

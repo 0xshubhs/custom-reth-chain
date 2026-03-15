@@ -550,9 +550,7 @@ mod tests {
         let consensus = production_consensus();
         let manager = Arc::new(SignerManager::new());
         let address = manager
-            .add_signer_from_hex(dev::DEV_PRIVATE_KEYS[0])
-            .await
-            .unwrap();
+            .add_signer_from_hex(dev::DEV_PRIVATE_KEYS[0]).unwrap();
 
         let sealer = BlockSealer::new(manager);
 
@@ -578,9 +576,7 @@ mod tests {
         let consensus = production_consensus();
         let manager = Arc::new(SignerManager::new());
         let address = manager
-            .add_signer_from_hex(dev::DEV_PRIVATE_KEYS[0])
-            .await
-            .unwrap();
+            .add_signer_from_hex(dev::DEV_PRIVATE_KEYS[0]).unwrap();
 
         // Verify the signer address is authorized
         assert!(consensus.chain_spec.is_authorized_signer(&address));
@@ -649,9 +645,7 @@ mod tests {
         let manager = Arc::new(SignerManager::new());
         // DEV_PRIVATE_KEYS[5] corresponds to account index 5 which is NOT in dev_signers() (only first 3)
         let address = manager
-            .add_signer_from_hex(dev::DEV_PRIVATE_KEYS[5])
-            .await
-            .unwrap();
+            .add_signer_from_hex(dev::DEV_PRIVATE_KEYS[5]).unwrap();
 
         // Verify the address is NOT authorized
         assert!(!consensus.chain_spec.is_authorized_signer(&address));
@@ -1224,9 +1218,7 @@ mod tests {
 
         let manager = Arc::new(SignerManager::new());
         let address = manager
-            .add_signer_from_hex(dev::DEV_PRIVATE_KEYS[0])
-            .await
-            .unwrap();
+            .add_signer_from_hex(dev::DEV_PRIVATE_KEYS[0]).unwrap();
 
         // Verify the signer is authorized
         assert!(chain.is_authorized_signer(&address));
@@ -1294,9 +1286,7 @@ mod tests {
     async fn build_signed_header(block_number: u64, signer_key_index: usize) -> Header {
         let manager = Arc::new(SignerManager::new());
         let address = manager
-            .add_signer_from_hex(dev::DEV_PRIVATE_KEYS[signer_key_index])
-            .await
-            .unwrap();
+            .add_signer_from_hex(dev::DEV_PRIVATE_KEYS[signer_key_index]).unwrap();
         let sealer = BlockSealer::new(manager);
         let header = Header {
             number: block_number,
@@ -1459,9 +1449,7 @@ mod tests {
 
             let manager = Arc::new(SignerManager::new());
             let address = manager
-                .add_signer_from_hex(dev::DEV_PRIVATE_KEYS[signer_idx])
-                .await
-                .unwrap();
+                .add_signer_from_hex(dev::DEV_PRIVATE_KEYS[signer_idx]).unwrap();
             let sealer = BlockSealer::new(manager);
 
             let header = Header {
@@ -1543,9 +1531,7 @@ mod tests {
         // Create block 2 with wrong parent hash
         let manager = Arc::new(SignerManager::new());
         let address = manager
-            .add_signer_from_hex(dev::DEV_PRIVATE_KEYS[1])
-            .await
-            .unwrap();
+            .add_signer_from_hex(dev::DEV_PRIVATE_KEYS[1]).unwrap();
         let sealer = BlockSealer::new(manager);
 
         let bad_header = Header {
@@ -1572,9 +1558,7 @@ mod tests {
         // Sign a block with signer index 5 (not in the 3-signer dev chain)
         let manager = Arc::new(SignerManager::new());
         let address = manager
-            .add_signer_from_hex(dev::DEV_PRIVATE_KEYS[5])
-            .await
-            .unwrap();
+            .add_signer_from_hex(dev::DEV_PRIVATE_KEYS[5]).unwrap();
         let sealer = BlockSealer::new(manager);
 
         let header = Header {
@@ -1628,9 +1612,7 @@ mod tests {
         for i in 0..3 {
             let mgr = Arc::new(SignerManager::new());
             let addr = mgr
-                .add_signer_from_hex(dev::DEV_PRIVATE_KEYS[i])
-                .await
-                .unwrap();
+                .add_signer_from_hex(dev::DEV_PRIVATE_KEYS[i]).unwrap();
             addresses.push(addr);
             sealers.push(BlockSealer::new(mgr));
         }
@@ -1716,9 +1698,7 @@ mod tests {
         // Signer 5 is NOT in the 3-signer dev chain
         let mgr = Arc::new(SignerManager::new());
         let addr = mgr
-            .add_signer_from_hex(dev::DEV_PRIVATE_KEYS[5])
-            .await
-            .unwrap();
+            .add_signer_from_hex(dev::DEV_PRIVATE_KEYS[5]).unwrap();
         let sealer = BlockSealer::new(mgr);
 
         let header = Header {
@@ -1765,9 +1745,7 @@ mod tests {
 
             let mgr = Arc::new(SignerManager::new());
             let addr = mgr
-                .add_signer_from_hex(dev::DEV_PRIVATE_KEYS[0])
-                .await
-                .unwrap();
+                .add_signer_from_hex(dev::DEV_PRIVATE_KEYS[0]).unwrap();
             let sealer = BlockSealer::new(mgr);
             let signed = sealer.seal_header(header, &addr).await.unwrap();
             let sealed = SealedHeader::seal_slow(signed.clone());
@@ -1806,9 +1784,7 @@ mod tests {
     /// Helper: derive address from a dev private key index
     async fn dev_address(key_index: usize) -> Address {
         let mgr = Arc::new(SignerManager::new());
-        mgr.add_signer_from_hex(dev::DEV_PRIVATE_KEYS[key_index])
-            .await
-            .unwrap()
+        mgr.add_signer_from_hex(dev::DEV_PRIVATE_KEYS[key_index]).unwrap()
     }
 
     #[tokio::test]
@@ -1827,9 +1803,7 @@ mod tests {
             let signer_idx = (block_num as usize) % 5;
             let mgr = Arc::new(SignerManager::new());
             let addr = mgr
-                .add_signer_from_hex(dev::DEV_PRIVATE_KEYS[signer_idx])
-                .await
-                .unwrap();
+                .add_signer_from_hex(dev::DEV_PRIVATE_KEYS[signer_idx]).unwrap();
             let sealer = BlockSealer::new(mgr);
 
             let header = Header {
@@ -1991,9 +1965,7 @@ mod tests {
 
         let mgr = Arc::new(SignerManager::new());
         let addr = mgr
-            .add_signer_from_hex(dev::DEV_PRIVATE_KEYS[0])
-            .await
-            .unwrap();
+            .add_signer_from_hex(dev::DEV_PRIVATE_KEYS[0]).unwrap();
         let sealer = BlockSealer::new(mgr);
 
         let signed_a = sealer.seal_header(header_a, &addr).await.unwrap();
@@ -2036,9 +2008,7 @@ mod tests {
             let signer_idx = (i as usize) % 3;
             let mgr = Arc::new(SignerManager::new());
             let addr = mgr
-                .add_signer_from_hex(dev::DEV_PRIVATE_KEYS[signer_idx])
-                .await
-                .unwrap();
+                .add_signer_from_hex(dev::DEV_PRIVATE_KEYS[signer_idx]).unwrap();
             let sealer = BlockSealer::new(mgr);
             let header = Header {
                 number: i,
@@ -2060,9 +2030,7 @@ mod tests {
         for i in 4u64..=6 {
             let mgr = Arc::new(SignerManager::new());
             let addr = mgr
-                .add_signer_from_hex(dev::DEV_PRIVATE_KEYS[0])
-                .await
-                .unwrap();
+                .add_signer_from_hex(dev::DEV_PRIVATE_KEYS[0]).unwrap();
             let sealer = BlockSealer::new(mgr);
             let header = Header {
                 number: i,
@@ -2085,9 +2053,7 @@ mod tests {
             let signer_idx = (i as usize) % 3;
             let mgr = Arc::new(SignerManager::new());
             let addr = mgr
-                .add_signer_from_hex(dev::DEV_PRIVATE_KEYS[signer_idx])
-                .await
-                .unwrap();
+                .add_signer_from_hex(dev::DEV_PRIVATE_KEYS[signer_idx]).unwrap();
             let sealer = BlockSealer::new(mgr);
             let header = Header {
                 number: i,

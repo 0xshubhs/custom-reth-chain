@@ -626,9 +626,7 @@ mod tests {
         let chain = test_chain_spec();
         let manager = Arc::new(SignerManager::new());
         manager
-            .add_signer_from_hex(crate::signer::dev::DEV_PRIVATE_KEYS[0])
-            .await
-            .unwrap();
+            .add_signer_from_hex(crate::signer::dev::DEV_PRIVATE_KEYS[0]).unwrap();
 
         let rpc = CliqueRpc::new(chain, manager);
 

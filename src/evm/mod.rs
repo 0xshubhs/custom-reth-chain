@@ -76,16 +76,22 @@ use reth_ethereum_forks::Hardforks;
 #[derive(Debug)]
 pub struct CalldataDiscountInspector<I> {
     inner: I,
-    /// Replacement cost per non-zero calldata byte (1–16 gas).
-    _calldata_gas_per_byte: u64,
     /// Pre-computed discount per non-zero byte: `16 - calldata_gas_per_byte`.
     ///
     /// Stored at construction to avoid recomputing the subtraction on every
     /// `discount_for` call and every `initialize_interp` hot-path check.
     /// Zero when `calldata_gas_per_byte == 16` (mainnet, no discount).
+    ///
+    /// Adjacent to `discount_applied` so both hot-path fields (`discount_per_byte`
+    /// and `discount_applied`) are on the same cache line.
     discount_per_byte: u64,
     /// Set to `true` after the discount has been applied for this EVM instance.
     discount_applied: bool,
+    /// Replacement cost per non-zero calldata byte (1–16 gas).
+    ///
+    /// Cold field — only used at construction time.  Placed last to keep the
+    /// hot fields (`discount_per_byte`, `discount_applied`) together.
+    _calldata_gas_per_byte: u64,
 }
 
 impl<I> CalldataDiscountInspector<I> {
@@ -94,9 +100,9 @@ impl<I> CalldataDiscountInspector<I> {
         let clamped = calldata_gas_per_byte.clamp(1, 16);
         Self {
             inner,
-            _calldata_gas_per_byte: clamped,
             discount_per_byte: 16u64 - clamped, // clamped ≤ 16, so no underflow
             discount_applied: false,
+            _calldata_gas_per_byte: clamped,
         }
     }
 

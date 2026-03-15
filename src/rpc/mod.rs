@@ -66,7 +66,7 @@ impl MeowApiServer for MeowRpc {
     }
 
     async fn node_info(&self) -> jsonrpsee::core::RpcResult<NodeInfoResponse> {
-        let local_signers = self.signer_manager.signer_addresses().await;
+        let local_signers = self.signer_manager.signer_addresses();
         let authorized = self.chain_spec.signers();
 
         Ok(NodeInfoResponse {
@@ -151,7 +151,6 @@ mod tests {
         // Add a signer key
         manager
             .add_signer_from_hex(crate::signer::dev::DEV_PRIVATE_KEYS[0])
-            .await
             .unwrap();
 
         let rpc = MeowRpc::new(chain, manager, true);
@@ -199,7 +198,7 @@ mod tests {
         let manager = Arc::new(SignerManager::new());
         // Add all 3 dev signers
         for key in crate::signer::dev::DEV_PRIVATE_KEYS.iter().take(3) {
-            manager.add_signer_from_hex(key).await.unwrap();
+            manager.add_signer_from_hex(key).unwrap();
         }
 
         let rpc = MeowRpc::new(chain, manager, true);
