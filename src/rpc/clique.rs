@@ -83,27 +83,24 @@ impl CliqueRpc {
         let signers = self.chain_spec.effective_signers();
         let proposals = self.proposals.read().unwrap_or_else(|e| e.into_inner());
 
-        let votes: Vec<CliqueVote> = proposals
-            .iter()
-            .map(|(addr, auth)| CliqueVote {
+        // Build both `votes` and `tally` in a single pass over `proposals` to
+        // avoid iterating the map twice.
+        let mut votes = Vec::with_capacity(proposals.len());
+        let mut tally = HashMap::with_capacity(proposals.len());
+        for (addr, auth) in proposals.iter() {
+            votes.push(CliqueVote {
                 signer: Address::ZERO, // local node proposal
                 address: *addr,
                 authorize: *auth,
-            })
-            .collect();
-
-        let tally: HashMap<Address, CliqueTally> = proposals
-            .iter()
-            .map(|(addr, auth)| {
-                (
-                    *addr,
-                    CliqueTally {
-                        authorize: *auth,
-                        votes: 1,
-                    },
-                )
-            })
-            .collect();
+            });
+            tally.insert(
+                *addr,
+                CliqueTally {
+                    authorize: *auth,
+                    votes: 1,
+                },
+            );
+        }
 
         CliqueSnapshot {
             number: 0, // would need state provider for actual block number

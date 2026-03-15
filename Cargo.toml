@@ -10,7 +10,7 @@ description = "A custom POA (Proof of Authority) node implementation using Reth"
 # Reth core dependencies (tracks main branch - `just update` fetches latest)
 reth-chainspec = { git = "https://github.com/paradigmxyz/reth", branch = "main" }
 reth-consensus = { git = "https://github.com/paradigmxyz/reth", branch = "main" }
-reth-ethereum = { git = "https://github.com/paradigmxyz/reth", branch = "main", features = ["node", "test-utils"] }
+reth-ethereum = { git = "https://github.com/paradigmxyz/reth", branch = "main", features = ["node"] }
 reth-ethereum-forks = { git = "https://github.com/paradigmxyz/reth", branch = "main" }
 reth-primitives-traits = { git = "https://github.com/paradigmxyz/reth", branch = "main" }
 reth-execution-types = { git = "https://github.com/paradigmxyz/reth", branch = "main" }
@@ -47,8 +47,15 @@ alloy-signer = "1"
 alloy-signer-local = "1"
 alloy-rlp = "0.3"
 
-# Async runtime
-tokio = { version = "1.41", features = ["full"] }
+# Async runtime — explicit minimal features (replaces "full" to reduce compile scope).
+# rt-multi-thread: #[tokio::main], block_in_place (payload/mod.rs)
+# rt:              single-thread runtime used by some tests / reth internals
+# macros:          #[tokio::main], #[tokio::test], tokio::select!
+# sync:            tokio::sync::RwLock (signer/manager.rs, rpc/admin.rs)
+# net:             tokio::net::TcpListener (metrics/registry.rs)
+# io-util:         tokio::io::{AsyncReadExt, AsyncWriteExt} (metrics/registry.rs)
+# signal:          tokio::signal::ctrl_c + unix SIGTERM (main.rs)
+tokio = { version = "1.41", features = ["rt-multi-thread", "rt", "macros", "sync", "net", "io-util", "signal"] }
 futures-util = "0.3"
 
 # Serialization

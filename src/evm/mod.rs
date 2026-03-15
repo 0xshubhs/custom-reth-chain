@@ -72,7 +72,13 @@ use reth_ethereum_forks::Hardforks;
 pub struct CalldataDiscountInspector<I> {
     inner: I,
     /// Replacement cost per non-zero calldata byte (1–16 gas).
-    calldata_gas_per_byte: u64,
+    _calldata_gas_per_byte: u64,
+    /// Pre-computed discount per non-zero byte: `16 - calldata_gas_per_byte`.
+    ///
+    /// Stored at construction to avoid recomputing the subtraction on every
+    /// `discount_for` call and every `initialize_interp` hot-path check.
+    /// Zero when `calldata_gas_per_byte == 16` (mainnet, no discount).
+    discount_per_byte: u64,
     /// Set to `true` after the discount has been applied for this EVM instance.
     discount_applied: bool,
 }
@@ -80,29 +86,35 @@ pub struct CalldataDiscountInspector<I> {
 impl<I> CalldataDiscountInspector<I> {
     /// Create a new inspector wrapping `inner` with the given calldata gas cost.
     pub fn new(inner: I, calldata_gas_per_byte: u64) -> Self {
+        let clamped = calldata_gas_per_byte.clamp(1, 16);
         Self {
             inner,
-            calldata_gas_per_byte: calldata_gas_per_byte.clamp(1, 16),
+            _calldata_gas_per_byte: clamped,
+            discount_per_byte: 16u64 - clamped, // clamped ≤ 16, so no underflow
             discount_applied: false,
         }
     }
 
     /// Returns the discount in gas for a given number of non-zero calldata bytes.
+    #[inline]
     pub fn discount_for(&self, non_zero_bytes: u64) -> u64 {
-        non_zero_bytes.saturating_mul(16u64.saturating_sub(self.calldata_gas_per_byte))
+        non_zero_bytes * self.discount_per_byte
     }
 
     /// Consume the wrapper and return the inner inspector.
+    #[inline]
     pub fn into_inner(self) -> I {
         self.inner
     }
 
     /// Borrow the inner inspector.
+    #[inline]
     pub fn inner(&self) -> &I {
         &self.inner
     }
 
     /// Mutably borrow the inner inspector.
+    #[inline]
     pub fn inner_mut(&mut self) -> &mut I {
         &mut self.inner
     }
@@ -111,13 +123,16 @@ impl<I> CalldataDiscountInspector<I> {
 impl<CTX, I: Inspector<CTX>> Inspector<CTX> for CalldataDiscountInspector<I> {
     fn initialize_interp(&mut self, interp: &mut Interpreter, context: &mut CTX) {
         // Apply discount once per tx (discount_applied resets when a new EVM is created).
-        if !self.discount_applied && self.calldata_gas_per_byte < 16 {
+        // Fast path: discount_per_byte == 0 means calldata_gas_per_byte == 16 (mainnet),
+        // so nothing to do.  This avoids the branch and byte-counting entirely.
+        if !self.discount_applied && self.discount_per_byte > 0 {
             self.discount_applied = true;
             // interp.input is InputsImpl (EthInterpreter default); .input is CallInput.
             let non_zero = match &interp.input.input {
                 CallInput::Bytes(bytes) => bytes.iter().filter(|&&b| b != 0).count() as u64,
                 CallInput::SharedBuffer(_) => 0, // shared-memory slice: skip (sub-call context)
             };
+            // discount_for is now a single multiply; skip erase_cost when result is zero.
             let discount = self.discount_for(non_zero);
             if discount > 0 {
                 interp.gas.erase_cost(discount);
@@ -126,30 +141,37 @@ impl<CTX, I: Inspector<CTX>> Inspector<CTX> for CalldataDiscountInspector<I> {
         self.inner.initialize_interp(interp, context);
     }
 
+    #[inline]
     fn step(&mut self, interp: &mut Interpreter, context: &mut CTX) {
         self.inner.step(interp, context);
     }
 
+    #[inline]
     fn step_end(&mut self, interp: &mut Interpreter, context: &mut CTX) {
         self.inner.step_end(interp, context);
     }
 
+    #[inline]
     fn log(&mut self, context: &mut CTX, log: Log) {
         self.inner.log(context, log);
     }
 
+    #[inline]
     fn call(&mut self, context: &mut CTX, inputs: &mut CallInputs) -> Option<CallOutcome> {
         self.inner.call(context, inputs)
     }
 
+    #[inline]
     fn call_end(&mut self, context: &mut CTX, inputs: &CallInputs, outcome: &mut CallOutcome) {
         self.inner.call_end(context, inputs, outcome);
     }
 
+    #[inline]
     fn create(&mut self, context: &mut CTX, inputs: &mut CreateInputs) -> Option<CreateOutcome> {
         self.inner.create(context, inputs)
     }
 
+    #[inline]
     fn create_end(
         &mut self,
         context: &mut CTX,
@@ -159,6 +181,7 @@ impl<CTX, I: Inspector<CTX>> Inspector<CTX> for CalldataDiscountInspector<I> {
         self.inner.create_end(context, inputs, outcome);
     }
 
+    #[inline]
     fn selfdestruct(&mut self, contract: Address, target: Address, value: U256) {
         self.inner.selfdestruct(contract, target, value);
     }
@@ -191,6 +214,12 @@ pub struct PoaEvmFactory {
     /// When `true`, sets `disable_base_fee = true` on every EVM instance.
     /// This allows transactions with `gasPrice: 0` / `maxFeePerGas: 0`.
     pub zero_gas: bool,
+    /// Pre-computed flag: `true` if `patch_env` has any work to do.
+    ///
+    /// Allows the hot-path EVM creation calls (`create_evm` / `create_evm_with_inspector`)
+    /// to skip the `patch_env` call entirely when all overrides are at their defaults
+    /// (`max_contract_size = None`, `zero_gas = false`).
+    needs_env_patch: bool,
 }
 
 impl Default for PoaEvmFactory {
@@ -200,6 +229,7 @@ impl Default for PoaEvmFactory {
             max_contract_size: None,
             calldata_gas_per_byte: 4, // POA default: reduce calldata cost
             zero_gas: false,
+            needs_env_patch: false, // no CfgEnv overrides active by default
         }
     }
 }
@@ -215,15 +245,21 @@ impl PoaEvmFactory {
         calldata_gas_per_byte: u64,
         zero_gas: bool,
     ) -> Self {
+        let needs_env_patch = max_contract_size.is_some() || zero_gas;
         Self {
             inner: EthEvmFactory::default(),
             max_contract_size,
             calldata_gas_per_byte: calldata_gas_per_byte.clamp(1, 16),
             zero_gas,
+            needs_env_patch,
         }
     }
 
     /// Apply POA-specific `CfgEnv` overrides to an [`EvmEnv`] before EVM creation.
+    ///
+    /// Only called when `needs_env_patch` is `true`; callers must check that flag
+    /// before invoking this to avoid the function-call overhead on the hot path.
+    #[inline]
     fn patch_env(&self, mut env: EvmEnv) -> EvmEnv {
         if let Some(limit) = self.max_contract_size {
             env.cfg_env.limit_contract_code_size = Some(limit);
@@ -237,6 +273,7 @@ impl PoaEvmFactory {
     }
 
     /// Whether the calldata discount is active (i.e. cheaper than mainnet).
+    #[inline]
     pub fn has_calldata_discount(&self) -> bool {
         self.calldata_gas_per_byte < 16
     }
@@ -257,7 +294,9 @@ impl EvmFactory for PoaEvmFactory {
     type Precompiles = PrecompilesMap;
 
     fn create_evm<DB: Database>(&self, db: DB, input: EvmEnv) -> Self::Evm<DB, NoOpInspector> {
-        self.inner.create_evm(db, self.patch_env(input))
+        // Skip patch_env entirely when no CfgEnv overrides are active.
+        let env = if self.needs_env_patch { self.patch_env(input) } else { input };
+        self.inner.create_evm(db, env)
     }
 
     fn create_evm_with_inspector<DB: Database, I: Inspector<Self::Context<DB>>>(
@@ -266,8 +305,8 @@ impl EvmFactory for PoaEvmFactory {
         input: EvmEnv,
         inspector: I,
     ) -> Self::Evm<DB, I> {
-        self.inner
-            .create_evm_with_inspector(db, self.patch_env(input), inspector)
+        let env = if self.needs_env_patch { self.patch_env(input) } else { input };
+        self.inner.create_evm_with_inspector(db, env, inspector)
     }
 }
 
@@ -396,14 +435,16 @@ mod tests {
     #[test]
     fn test_calldata_discount_inspector_clamps_cost_to_1() {
         // 0 would be invalid (division by zero risk) — clamp to 1
+        // When clamped to 1: discount_per_byte = 16 - 1 = 15
         let inspector = CalldataDiscountInspector::new(NoOpInspector, 0);
-        assert_eq!(inspector.calldata_gas_per_byte, 1);
+        assert_eq!(inspector.discount_for(1), 15);
     }
 
     #[test]
     fn test_calldata_discount_inspector_clamps_cost_to_16() {
+        // When clamped to 16 (mainnet): discount_per_byte = 16 - 16 = 0
         let inspector = CalldataDiscountInspector::new(NoOpInspector, 20);
-        assert_eq!(inspector.calldata_gas_per_byte, 16);
+        assert_eq!(inspector.discount_for(100), 0);
     }
 
     #[test]

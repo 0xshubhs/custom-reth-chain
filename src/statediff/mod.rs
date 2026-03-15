@@ -35,6 +35,7 @@ pub struct StorageSlotDiff {
 }
 
 impl StorageSlotDiff {
+    #[inline]
     pub fn new(old_value: B256, new_value: B256) -> Self {
         Self {
             old_value,
@@ -43,6 +44,7 @@ impl StorageSlotDiff {
     }
 
     /// Whether the value actually changed.
+    #[inline]
     pub fn is_noop(&self) -> bool {
         self.old_value == self.new_value
     }
@@ -62,12 +64,26 @@ pub struct AccountDiff {
 }
 
 impl AccountDiff {
+    /// Create an `AccountDiff` with a pre-sized storage map.
+    ///
+    /// Used by `StateDiffBuilder` to avoid repeated rehashing when the first
+    /// recorded change for an account is a storage write.
+    #[inline]
+    fn with_storage_capacity(capacity: usize) -> Self {
+        Self {
+            storage: HashMap::with_capacity(capacity),
+            ..Default::default()
+        }
+    }
+
     /// Number of storage slots that changed.
+    #[inline]
     pub fn storage_change_count(&self) -> usize {
         self.storage.len()
     }
 
     /// Whether any field actually changed.
+    #[inline]
     pub fn is_empty(&self) -> bool {
         self.balance.is_none()
             && self.nonce.is_none()
@@ -76,6 +92,7 @@ impl AccountDiff {
     }
 
     /// Whether only storage changed (common for contract calls).
+    #[inline]
     pub fn is_storage_only(&self) -> bool {
         self.balance.is_none() && self.nonce.is_none() && !self.code_changed
     }
@@ -103,6 +120,7 @@ pub struct StateDiff {
 
 impl StateDiff {
     /// Number of accounts touched by this block.
+    #[inline]
     pub fn touched_account_count(&self) -> usize {
         self.changes.len()
     }
@@ -116,6 +134,7 @@ impl StateDiff {
     }
 
     /// Whether this block changed any state at all.
+    #[inline]
     pub fn is_empty(&self) -> bool {
         self.changes.is_empty()
     }
@@ -133,11 +152,13 @@ impl StateDiff {
     }
 
     /// Get the diff for a specific account, if any.
+    #[inline]
     pub fn account_diff(&self, addr: &Address) -> Option<&AccountDiff> {
         self.changes.get(addr)
     }
 
     /// Get the new storage value for `(addr, slot)` after this block, if it changed.
+    #[inline]
     pub fn storage_after(&self, addr: &Address, slot: &U256) -> Option<B256> {
         self.changes
             .get(addr)
@@ -169,6 +190,10 @@ impl StateDiff {
 ///
 /// Accumulates account and storage changes; call [`build`](Self::build) after
 /// execution is complete to get the final immutable diff.
+///
+/// The inner `changes` map is pre-allocated for
+/// `INITIAL_ACCOUNT_CAPACITY` entries to avoid rehashing during the
+/// hot per-block path.
 #[derive(Debug, Default)]
 pub struct StateDiffBuilder {
     block_number: u64,
@@ -178,13 +203,30 @@ pub struct StateDiffBuilder {
     tx_count: usize,
 }
 
+/// Initial capacity for the per-block accounts map.
+///
+/// Most blocks touch fewer than 32 distinct accounts (coinbase + active
+/// contract + EOA sender); 32 avoids the first two resize steps while
+/// keeping the cold-start overhead negligible (32 × ~56 bytes ≈ 1.8 KB).
+const INITIAL_ACCOUNT_CAPACITY: usize = 32;
+
+/// Initial capacity for the per-account storage-slot map.
+///
+/// Contract calls rarely touch more than 8 slots; pre-allocating 8 avoids
+/// the first resize for the common case.
+const INITIAL_STORAGE_CAPACITY: usize = 8;
+
 impl StateDiffBuilder {
     /// Create a new builder for the given block.
+    ///
+    /// Pre-allocates internal maps to reduce rehashing on the hot path.
     pub fn new(block_number: u64, block_hash: B256) -> Self {
         Self {
             block_number,
             block_hash,
-            ..Default::default()
+            changes: HashMap::with_capacity(INITIAL_ACCOUNT_CAPACITY),
+            gas_used: 0,
+            tx_count: 0,
         }
     }
 
@@ -201,6 +243,7 @@ impl StateDiffBuilder {
     }
 
     /// Record a balance change for an account.
+    #[inline]
     pub fn record_balance_change(&mut self, addr: Address, old: U256, new: U256) {
         if old != new {
             self.changes.entry(addr).or_default().balance = Some((old, new));
@@ -208,6 +251,7 @@ impl StateDiffBuilder {
     }
 
     /// Record a nonce change for an account.
+    #[inline]
     pub fn record_nonce_change(&mut self, addr: Address, old: u64, new: u64) {
         if old != new {
             self.changes.entry(addr).or_default().nonce = Some((old, new));
@@ -215,6 +259,7 @@ impl StateDiffBuilder {
     }
 
     /// Mark that an account's code changed (contract creation or self-destruct).
+    #[inline]
     pub fn record_code_change(&mut self, addr: Address) {
         self.changes.entry(addr).or_default().code_changed = true;
     }
@@ -222,9 +267,12 @@ impl StateDiffBuilder {
     /// Record a storage slot change for an account.
     pub fn record_storage_change(&mut self, addr: Address, slot: U256, old: B256, new: B256) {
         if old != new {
+            // Use `or_insert_with` so the AccountDiff's storage map is
+            // pre-sized only when the entry is actually absent, avoiding an
+            // allocation on the fast path when the account was already seen.
             self.changes
                 .entry(addr)
-                .or_default()
+                .or_insert_with(|| AccountDiff::with_storage_capacity(INITIAL_STORAGE_CAPACITY))
                 .storage
                 .insert(slot, StorageSlotDiff::new(old, new));
         }
@@ -252,6 +300,7 @@ impl StateDiffBuilder {
     }
 
     /// Number of accounts with recorded changes so far.
+    #[inline]
     pub fn touched_accounts(&self) -> usize {
         self.changes.len()
     }

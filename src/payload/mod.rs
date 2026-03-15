@@ -168,7 +168,9 @@ where
             }
         }
 
-        // Use effective_signers (live on-chain if available, else genesis config)
+        // Use effective_signers (live on-chain if available, else genesis config).
+        // Compute in_turn_signer directly from the returned slice to avoid a
+        // second read-lock acquisition that expected_signer() would require.
         let signers = self.chain_spec.effective_signers();
         if signers.is_empty() {
             // No signers configured, return unsigned
@@ -176,38 +178,12 @@ where
         }
 
         // Determine which signer should sign this block (round-robin)
-        let in_turn_signer = match self.chain_spec.expected_signer(block_number) {
-            Some(s) => s,
-            None => return Ok(payload),
-        };
+        let in_turn_signer = signers[(block_number as usize) % signers.len()];
 
-        // Find a signer we control.
-        // Use block_in_place + block_on so this works from both spawn_blocking contexts
-        // (dev mode) and async task contexts (production+mining mode).
+        // Find a signer we control and seal the header in a single block_in_place call.
+        // This avoids two separate thread-park/unpark cycles per block.
         let handle = tokio::runtime::Handle::current();
-        let signer_manager = self.signer_manager.clone();
-
-        let (signer_addr, is_in_turn) = tokio::task::block_in_place(|| {
-            handle.block_on(async {
-                // Prefer in-turn signer if we have it
-                if signer_manager.has_signer(&in_turn_signer).await {
-                    return (in_turn_signer, true);
-                }
-                // Otherwise find any authorized signer we control
-                let our_addrs = signer_manager.signer_addresses().await;
-                for addr in &our_addrs {
-                    if signers.contains(addr) {
-                        return (*addr, false);
-                    }
-                }
-                (Address::ZERO, false)
-            })
-        });
-
-        if signer_addr == Address::ZERO {
-            // No authorized signer key available, return unsigned
-            return Ok(payload);
-        }
+        let signer_manager = &self.signer_manager;
 
         // Clone header and body from the built block
         let mut header = block.header().clone();
@@ -235,13 +211,37 @@ where
         extra_data.extend_from_slice(&[0u8; EXTRA_SEAL_LENGTH]);
         header.extra_data = Bytes::from(extra_data);
 
-        // Sign the header (Phase 5: timed for performance metrics)
+        // Single block_in_place: find signer + seal header
         let sign_timer = PhaseTimer::start();
-        let sealer = BlockSealer::new(self.signer_manager.clone());
-        let signed_header = tokio::task::block_in_place(|| {
-            handle.block_on(async { sealer.seal_header(header, &signer_addr).await })
-        })
-        .map_err(|e| PayloadBuilderError::Other(Box::new(e)))?;
+        let (signed_header, signer_addr, is_in_turn) = tokio::task::block_in_place(|| {
+            handle.block_on(async {
+                // Prefer in-turn signer if we have it
+                let (signer_addr, is_in_turn) =
+                    if signer_manager.has_signer(&in_turn_signer).await {
+                        (in_turn_signer, true)
+                    } else if let Some(addr) = signer_manager.first_signer_in(&signers).await
+                    {
+                        (addr, false)
+                    } else {
+                        return Ok((header, Address::ZERO, false));
+                    };
+
+                // Seal the header with the selected signer
+                let sealer = BlockSealer::new(signer_manager.clone());
+                let signed_header = sealer
+                    .seal_header(header, &signer_addr)
+                    .await
+                    .map_err(|e| PayloadBuilderError::Other(Box::new(e)))?;
+
+                Ok::<_, PayloadBuilderError>((signed_header, signer_addr, is_in_turn))
+            })
+        })?;
+
+        if signer_addr == Address::ZERO {
+            // No authorized signer key available, return unsigned
+            return Ok(payload);
+        }
+
         let sign_ms = sign_timer.elapsed_ms();
 
         output::print_block_signed(block_number, &signer_addr, is_in_turn, build_ms, sign_ms);

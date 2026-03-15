@@ -86,37 +86,36 @@ where
         // Startup reads populate the cache; subsequent epoch reads re-use it.
         let cache: SharedCache = Arc::new(Mutex::new(HotStateCache::new(self.cache_size)));
 
-        // Read gas limit from on-chain ChainConfig contract (Phase 3: item 20).
-        // Falls back to CLI/genesis default if the contract isn't readable yet.
-        // Uses the shared cache so the reads warm it up for future block builds.
+        // Read gas limit and signer list from on-chain contracts at startup.
+        // Uses a single state snapshot and shared cache for both reads.
         let gas_limit = match ctx.provider().latest() {
             Ok(state) => {
                 let reader = StateProviderStorageReader(state.as_ref());
                 let cached = CachedStorageReader::new_shared(reader, Arc::clone(&cache));
-                let onchain = read_gas_limit(&cached).filter(|&gl| gl > 0);
-                if let Some(gl) = onchain {
+
+                // Read gas limit from ChainConfig
+                let onchain_gas = read_gas_limit(&cached).filter(|&gl| gl > 0);
+                let gl = if let Some(gl) = onchain_gas {
                     if gl != default_gas_limit {
                         output::print_onchain_gas_limit(gl, default_gas_limit);
                     }
                     gl
                 } else {
                     default_gas_limit
+                };
+
+                // Seed live signer cache from SignerRegistry
+                if let Some(list) = read_signer_list(&cached) {
+                    if !list.signers.is_empty() {
+                        output::print_onchain_signers(list.signers.len());
+                        self.chain_spec.update_live_signers(list.signers);
+                    }
                 }
+
+                gl
             }
             Err(_) => default_gas_limit,
         };
-
-        // Also seed the live signer cache from SignerRegistry at startup.
-        if let Ok(state) = ctx.provider().latest() {
-            let reader = StateProviderStorageReader(state.as_ref());
-            let cached = CachedStorageReader::new_shared(reader, Arc::clone(&cache));
-            if let Some(list) = read_signer_list(&cached) {
-                if !list.signers.is_empty() {
-                    output::print_onchain_signers(list.signers.len());
-                    self.chain_spec.update_live_signers(list.signers);
-                }
-            }
-        }
 
         // In production mode, pre-allocate POA extra_data (vanity + seal placeholder).
         // In dev mode, leave extra_data empty — blocks are unsigned and Reth's engine

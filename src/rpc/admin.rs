@@ -110,9 +110,11 @@ impl AdminApiServer for AdminRpc {
         let genesis_hash = format!("{:#x}", self.chain_spec.genesis_hash());
         let poa_config = self.chain_spec.poa_config();
 
+        // Build the placeholder node-id once so it isn't allocated twice.
+        let node_id = "0".repeat(128);
         Ok(AdminNodeInfo {
-            enode: format!("enode://{}@127.0.0.1:{}", "0".repeat(128), self.p2p_port),
-            id: "0".repeat(128),
+            enode: format!("enode://{}@127.0.0.1:{}", node_id, self.p2p_port),
+            id: node_id,
             name: NODE_VERSION.to_string(),
             ip: "127.0.0.1".to_string(),
             ports: AdminPorts {
@@ -172,7 +174,7 @@ impl AdminApiServer for AdminRpc {
             },
             protocols: std::collections::HashMap::from([(
                 "eth".to_string(),
-                format!("{}", self.chain_spec.inner().chain.id()),
+                self.chain_spec.inner().chain.id().to_string(),
             )]),
         };
 

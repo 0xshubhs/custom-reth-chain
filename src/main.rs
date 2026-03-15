@@ -82,23 +82,23 @@ async fn main() -> eyre::Result<()> {
         PoaChainSpec::new(genesis, poa_config)
     };
 
-    let chain_spec_arc = Arc::new(poa_chain.clone());
+    let chain_spec_arc = Arc::new(poa_chain);
 
     // Effective mining interval: --block-time-ms overrides --block-time when non-zero (Phase 2.14).
     let mining_interval = if cli.block_time_ms > 0 {
         Duration::from_millis(cli.block_time_ms)
     } else {
-        Duration::from_secs(poa_chain.block_period())
+        Duration::from_secs(chain_spec_arc.block_period())
     };
 
-    output::print_banner(poa_chain.inner().chain.id(), mining_interval);
+    output::print_banner(chain_spec_arc.inner().chain.id(), mining_interval);
     let mode_str = match (is_dev_mode, cli.mining) {
         (true, _) => "dev",
         (false, true) => "production+mining",
         (false, false) => "production",
     };
     output::print_mode(mode_str);
-    output::print_signers(poa_chain.signers());
+    output::print_signers(chain_spec_arc.signers());
 
     // Set up signer manager with runtime key loading
     let signer_manager = Arc::new(SignerManager::new());
@@ -243,7 +243,7 @@ async fn main() -> eyre::Result<()> {
         .with_network(network_args)
         .with_metrics(metric_args)
         .with_pruning(pruning_args)
-        .with_chain(poa_chain.inner().clone())
+        .with_chain(chain_spec_arc.inner().clone())
         .with_datadir_args(DatadirArgs {
             datadir: cli.datadir.clone().into(),
             ..Default::default()
@@ -256,7 +256,7 @@ async fn main() -> eyre::Result<()> {
         } else {
             "interval"
         },
-        poa_chain.inner().genesis().gas_limit,
+        chain_spec_arc.inner().genesis().gas_limit,
         &http_addr.to_string(),
         cli.http_port,
         &ws_addr.to_string(),
@@ -281,17 +281,11 @@ async fn main() -> eyre::Result<()> {
     // Build and launch the node with PoaNode (custom consensus + payload builder)
     // PoaNode injects PoaConsensus for validation and PoaPayloadBuilder for signed block production.
     // dev_mode controls whether signature verification is enforced.
-    // Clone values for the RPC closure (captured by move)
+    let node_start_time = std::time::Instant::now();
+    let p2p_port = cli.port;
+    // Clone Arc handles for the RPC closure; originals stay live for post-launch use.
     let rpc_chain_spec = chain_spec_arc.clone();
     let rpc_signer_manager = signer_manager.clone();
-    let rpc_dev_mode = is_dev_mode;
-    let clique_chain_spec = chain_spec_arc.clone();
-    let clique_signer_manager = signer_manager.clone();
-    let admin_chain_spec = chain_spec_arc.clone();
-    let admin_signer_manager = signer_manager.clone();
-    let admin_dev_mode = is_dev_mode;
-    let admin_p2p_port = cli.port;
-    let node_start_time = std::time::Instant::now();
 
     let NodeHandle {
         node,
@@ -309,20 +303,20 @@ async fn main() -> eyre::Result<()> {
                 .with_zero_gas(cli.zero_gas),
         )
         .extend_rpc_modules(move |ctx| {
-            let meow_rpc = MeowRpc::new(rpc_chain_spec, rpc_signer_manager, rpc_dev_mode);
+            let meow_rpc = MeowRpc::new(rpc_chain_spec.clone(), rpc_signer_manager.clone(), is_dev_mode);
             ctx.modules.merge_configured(meow_rpc.into_rpc())?;
             output::print_rpc_registered("meow_*");
 
-            let clique_rpc = CliqueRpc::new(clique_chain_spec, clique_signer_manager);
+            let clique_rpc = CliqueRpc::new(rpc_chain_spec.clone(), rpc_signer_manager.clone());
             ctx.modules.merge_configured(clique_rpc.into_rpc())?;
             output::print_rpc_registered("clique_*");
 
             let admin_rpc = AdminRpc::new(
-                admin_chain_spec,
-                admin_signer_manager,
+                rpc_chain_spec.clone(),
+                rpc_signer_manager.clone(),
                 node_start_time,
-                admin_dev_mode,
-                admin_p2p_port,
+                is_dev_mode,
+                p2p_port,
             );
             // Reth provides built-in admin_* methods (nodeInfo, peers, addPeer, removePeer).
             // Our AdminRpc adds admin_health for load balancers. If Reth's admin_* conflicts,
@@ -336,7 +330,7 @@ async fn main() -> eyre::Result<()> {
         .launch_with_debug_capabilities()
         .await?;
 
-    output::print_node_started(poa_chain.inner().genesis_hash());
+    output::print_node_started(chain_spec_arc.inner().genesis_hash());
 
     // Print production-grade feature status after node launch
     if cli.metrics {
@@ -353,14 +347,14 @@ async fn main() -> eyre::Result<()> {
     output::print_info(&format!("Max RPC connections: {}", cli.rpc_max_connections));
     output::print_info(&format!(
         "RPC payload limits: request={}MB response={}MB",
-        cli.rpc_max_request_size, cli.rpc_max_response_size
+        cli.rpc_max_request_size, cli.rpc_max_response_size,
     ));
     if cli.archive {
         output::print_feature("Archive mode", "all historical state retained");
     }
     output::print_info(&format!(
         "Gas price oracle: {} blocks, {}th percentile",
-        cli.gpo_blocks, cli.gpo_percentile
+        cli.gpo_blocks, cli.gpo_percentile,
     ));
     if cli.zero_gas {
         output::print_feature("Zero-gas mode", "base fee disabled, gasPrice=0 accepted");
@@ -403,7 +397,8 @@ async fn main() -> eyre::Result<()> {
     let monitoring_chain_spec = chain_spec_arc.clone();
     let monitoring_signer_manager = signer_manager.clone();
     let monitoring_metrics = chain_metrics.clone();
-    let monitoring_interval = mining_interval;
+    // Pre-compute once — used every block for the time-budget check.
+    let interval_ms = mining_interval.as_millis() as u64;
     tokio::spawn(async move {
         let mut block_stream = node.provider.canonical_state_stream();
         // Track wall-clock arrival time for block-time budget monitoring (Phase 2.16).
@@ -419,11 +414,21 @@ async fn main() -> eyre::Result<()> {
             let tx_count = block.body().transactions().count();
             let gas_used = block.header().gas_used();
 
+            // Determine which signer should sign this block (round-robin).
+            // Check early so we can skip expensive state-diff work when no signers are configured.
+            let signers = monitoring_chain_spec.signers();
+            if signers.is_empty() {
+                output::print_block_no_signers(block_num, tx_count);
+                continue;
+            }
+            let signer_index = (block_num as usize) % signers.len();
+            let expected_signer = signers[signer_index];
+
             // ── State diff (Phase 2.18): build StateDiff from execution_outcome ──
             // Captures balance/nonce/code + storage changes for replica sync foundation.
             let chain = notification.committed();
             let outcome = chain.execution_outcome();
-            let block_hash: B256 = block.hash();
+            let block_hash = block.hash();
             let mut diff_builder = StateDiffBuilder::new(block_num, block_hash)
                 .with_gas_used(gas_used)
                 .with_tx_count(tx_count);
@@ -458,29 +463,19 @@ async fn main() -> eyre::Result<()> {
             let accounts_changed = state_diff.touched_account_count();
             let slots_changed = state_diff.total_storage_changes();
 
-            // Determine which signer should sign this block (round-robin)
-            let signers = monitoring_chain_spec.signers();
-            if signers.is_empty() {
-                output::print_block_no_signers(block_num, tx_count);
-                continue;
-            }
-            let signer_index = (block_num as usize) % signers.len();
-            let expected_signer = signers[signer_index];
-
-            // Determine if this is an in-turn block for metrics
-            let in_turn = monitoring_signer_manager.has_signer(&expected_signer).await;
+            // Determine if this is an in-turn block for metrics.
+            // Single lock acquisition: first_signer_in returns the first key we hold that
+            // is in the authorized signer set, or None.
+            let our_signer = monitoring_signer_manager.first_signer_in(signers).await;
+            let in_turn = our_signer == Some(expected_signer);
 
             // Check if we have the key for the expected signer
             if in_turn {
                 output::print_block_in_turn(block_num, tx_count, &expected_signer);
+            } else if our_signer.is_some() {
+                output::print_block_out_of_turn(block_num, tx_count, &expected_signer);
             } else {
-                let our_addresses = monitoring_signer_manager.signer_addresses().await;
-                let is_our_turn = our_addresses.iter().any(|addr| signers.contains(addr));
-                if is_our_turn {
-                    output::print_block_out_of_turn(block_num, tx_count, &expected_signer);
-                } else {
-                    output::print_block_observed(block_num, tx_count, &expected_signer);
-                }
+                output::print_block_observed(block_num, tx_count, &expected_signer);
             }
 
             // Print state diff when there are transactions (Phase 2.15).
@@ -492,7 +487,6 @@ async fn main() -> eyre::Result<()> {
             // interval (Phase 2.16). 3× threshold avoids false positives from normal
             // Reth dev-mining timer jitter (~2× is common at sub-second intervals).
             // Skip block 1 (first arrival time is not meaningful).
-            let interval_ms = monitoring_interval.as_millis() as u64;
             if block_num > 1 && interval_ms > 0 && elapsed_ms > interval_ms * 3 {
                 output::print_block_time_budget_warning(block_num, elapsed_ms, interval_ms);
             }

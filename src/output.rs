@@ -60,7 +60,7 @@ pub fn print_signers(signers: &[Address]) {
         println!(
             "    {}. {}",
             (i + 1).to_string().dimmed(),
-            format!("{signer}").cyan()
+            signer.to_string().cyan()
         );
     }
 }
@@ -70,7 +70,7 @@ pub fn print_signer_loaded(addr: &Address) {
     println!(
         "  {} Signer key loaded: {}",
         "OK".green().bold(),
-        format!("{addr}").cyan()
+        addr.to_string().cyan()
     );
 }
 
@@ -183,7 +183,7 @@ pub fn print_prefunded(accounts: &[Address]) {
         println!(
             "  {}. {}",
             (i + 1).to_string().dimmed(),
-            format!("{account}").cyan()
+            account.to_string().cyan()
         );
     }
 }
@@ -284,7 +284,7 @@ pub fn print_block_signed(
         "  {} POA block #{} signed by {} ({}, build={}ms sign={}ms)",
         "OK".green().bold(),
         block_number.to_string().cyan(),
-        format!("{signer}").cyan(),
+        signer.to_string().cyan(),
         turn,
         build_ms.to_string().dimmed(),
         sign_ms.to_string().dimmed(),
@@ -311,7 +311,7 @@ pub fn print_block_in_turn(block_num: u64, tx_count: usize, signer: &Address) {
         "#".green(),
         block_num.to_string().cyan(),
         tx_count.to_string().cyan(),
-        format!("{signer}").green(),
+        signer.to_string().green(),
     );
 }
 
@@ -322,7 +322,7 @@ pub fn print_block_out_of_turn(block_num: u64, tx_count: usize, expected: &Addre
         "#".yellow(),
         block_num.to_string().cyan(),
         tx_count.to_string().cyan(),
-        format!("{expected}").dimmed(),
+        expected.to_string().dimmed(),
     );
 }
 
@@ -333,7 +333,7 @@ pub fn print_block_observed(block_num: u64, tx_count: usize, expected: &Address)
         "#".dimmed(),
         block_num.to_string().cyan(),
         tx_count.to_string().cyan(),
-        format!("{expected}").dimmed(),
+        expected.to_string().dimmed(),
     );
 }
 

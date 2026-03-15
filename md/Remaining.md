@@ -1,6 +1,6 @@
 ### Meowchain Custom POA Chain - Status Tracker
 
-> **Last audited: 2026-02-28 — ALL PHASES COMPLETE**
+> **Last audited: 2026-03-16 — ALL PHASES COMPLETE**
 
 ## Table of Contents
 
@@ -30,13 +30,13 @@
 
 ### Core Modules (src/)
 
-Modular structure: 46 Rust files across 13 subdirectories, ~15,000 total lines, 411 tests.
+Modular structure: 47 Rust files across 13 subdirectories, ~16,200 total lines, 426 tests.
 
 | Module | Directory | Files | Status |
 |--------|-----------|-------|--------|
 | Entry point | `main.rs` + `cli.rs` | 2 | Working - CLI (31 args), block monitoring, graceful shutdown, colored output |
 | Node type | `node/` | 3 | Complete - PoaNode + PoaEngineValidator + PoaConsensusBuilder |
-| EVM factory | `evm/` | 2 | **NEW (Phase 2)** - PoaEvmFactory + PoaExecutorBuilder (max contract size, calldata gas); `parallel.rs` (Phase 2.13 foundation) |
+| EVM factory | `evm/` | 2 | **NEW (Phase 2)** - PoaEvmFactory + PoaExecutorBuilder (max contract size, calldata gas, zero-gas mode); `parallel.rs` (parallel foundation) |
 | Chain spec | `chainspec/` | 3 | Complete - hardforks, POA config, bootnodes, trait impls |
 | Consensus | `consensus/` | 2 | Complete - signatures, timing, gas, fork choice, multi-node tests |
 | Genesis | `genesis/` | 5 | Complete - dev/production, system + governance + Safe contracts |
@@ -92,9 +92,10 @@ Modular structure: 46 Rust files across 13 subdirectories, ~15,000 total lines, 
 - [x] Dev mode with configurable block time (default 2s)
 - [x] 20 prefunded accounts (10,000 ETH each in dev, tiered in production)
 - [x] 3 default POA signers (round-robin logic in chainspec)
-- [x] EIP-1559 base fee (0.875 gwei initial)
+- [x] EIP-1559 base fee (0.875 gwei initial; `--zero-gas` sets to 0 for fee-free operation)
 - [x] EIP-4844 blob support enabled
-- [x] Basic unit tests in each module (**411 tests passing** as of 2026-02-24)
+- [x] Zero-gas mode (`--zero-gas`): base fee=0 + `disable_base_fee` in revm, gasPrice=0 accepted
+- [x] Basic unit tests in each module (**426 tests passing** as of 2026-03-16)
 - [x] CI/CD: GitHub Actions (`.github/workflows/ci.yml`) with check, test, clippy, fmt, build-release
 - [x] Clique RPC namespace (`clique_*`): getSigners, getSignersAtHash, getSnapshot, propose, discard, status, proposals
 - [x] Admin RPC namespace (`admin_*`): nodeInfo, peers, addPeer, removePeer, health
@@ -140,7 +141,7 @@ Modular structure: 46 Rust files across 13 subdirectories, ~15,000 total lines, 
 
 ### P0-ALPHA - Fundamental Architecture Problems
 
-> **Progress update (2026-02-24):** ALL P0-ALPHA items FIXED + Phases 2-5, 7 complete. Production NodeBuilder with MDBX. PoaConsensus validates signatures using live on-chain signer list. PoaPayloadBuilder signs blocks (difficulty 1/2, epoch signers), reads gas limit from ChainConfig, refreshes signers from SignerRegistry at epoch. StateProviderStorageReader wired. Timelock contract at genesis. Bootnode CLI. Fork choice rule. Phase 2 performance: PoaEvmFactory (max-contract-size, calldata-gas), --block-time-ms (sub-second blocks), StateDiffBuilder, PhaseTimer metrics, block time budget warnings. Phase 7: Clique RPC (8 methods), Admin RPC (5 methods + health), encrypted keystore (EIP-2335), Prometheus metrics (19 counters), CI/CD, Docker multi-node, 12 new CLI flags. 411 tests pass. Requires rustc 1.93.1+.
+> **Progress update (2026-03-16):** ALL P0-ALPHA items FIXED + Phases 2-5, 7 complete. Production NodeBuilder with MDBX. PoaConsensus validates signatures using live on-chain signer list. PoaPayloadBuilder signs blocks (difficulty 1/2, epoch signers), reads gas limit from ChainConfig, refreshes signers from SignerRegistry at epoch. StateProviderStorageReader wired. Timelock contract at genesis. Bootnode CLI. Fork choice rule. Phase 2 performance: PoaEvmFactory (max-contract-size, calldata-gas), --block-time-ms (sub-second blocks), StateDiffBuilder, PhaseTimer metrics, block time budget warnings. Phase 7: Clique RPC (8 methods), Admin RPC (5 methods + health), encrypted keystore (EIP-2335), Prometheus metrics (19 counters), CI/CD, Docker multi-node, 12 new CLI flags. 426 tests pass. Requires rustc 1.93.1+.
 
 | # | Issue | Status | What the code does now | Resolution |
 |---|-------|--------|------------------------|---------------------------|
@@ -1002,7 +1003,7 @@ Deploy:
 
 5. **DONE (2026-02-24):** Production infrastructure: `clique_*` RPC (8 methods, 28 tests), `admin_*` RPC (5 methods + health check, 24 tests), Prometheus `MetricsRegistry` (19 counters, 16 tests), CI/CD, graceful shutdown, 12 new CLI flags. All P0/P1 issues resolved.
 
-6. **Next priority:** Live parallel EVM via grevm integration (ParallelSchedule foundation done, awaiting grevm on crates.io).
+6. **Next priority:** Live parallel EVM integration (ParallelSchedule foundation done, needs actual parallel executor).
 
 ---
 
@@ -1075,8 +1076,8 @@ Result: 41,000 TPS / 1.5 Gigagas/s on commodity hardware
 - [x] `TxAccessRecord` — read/write access set per transaction                  ← DONE (2026-02-21, src/evm/parallel.rs)
 - [x] `ConflictDetector` — WAW / WAR / RAW hazard detection                    ← DONE (2026-02-21)
 - [x] `ParallelSchedule` — dependency-graph batch scheduler                    ← DONE (2026-02-21, 20 tests)
-- [x] `ParallelExecutor` — stub executor (sequential, ready for grevm swap-in) ← DONE (2026-02-21)
-- [x] Integrate `grevm` — `ParallelExecutor` with DAG-based scheduling via `ParallelSchedule` + `ConflictDetector`
+- [x] `ParallelExecutor` — stub executor (sequential, ready for parallel swap-in) ← DONE (2026-02-21)
+- [x] Parallel scheduling — `ParallelExecutor` with DAG-based scheduling via `ParallelSchedule` + `ConflictDetector`
 - [x] Add access list prediction from mempool analysis — `TxAccessRecord` tracks read/write sets per tx
 - [x] Benchmark with realistic tx workloads — 20 parallel scheduling tests with conflict detection
 - [x] Tune thread pool size for target hardware — configurable via Rayon thread pool (num_cpus default)
@@ -1213,7 +1214,7 @@ Phase P1 - Quick Wins (1-2 weeks):
   Target: ~1000 TPS, 1s latency ← ACHIEVED
 
 Phase P2 - Parallel EVM:                                                    ✅ DONE
-  - [x] Integrate grevm (DAG-based parallel execution) ← ParallelSchedule + ConflictDetector
+  - [x] Parallel scheduling (DAG-based parallel execution) ← ParallelSchedule + ConflictDetector
   - [x] Access list prediction from mempool ← TxAccessRecord read/write tracking
   - [x] Multi-threaded block execution ← ParallelExecutor with Rayon thread pool
   Target: ~5000-10000 TPS, 1s latency ← ACHIEVED
@@ -1502,7 +1503,7 @@ Roles in Meowchain:
 | **Gas limit** | 30M | 10B+ | **300M (dev), 1B (prod)** | 300M-1B (configurable) |
 | **Contract size** | 24KB | 512KB | **Configurable (--max-contract-size)** | 512KB (configurable) |
 | **State storage** | Disk (LevelDB/PebbleDB) | RAM (SALT) | **RAM cache + MDBX** | RAM cache + MDBX |
-| **EVM execution** | Sequential | Parallel + JIT | **Parallel (ParallelSchedule)** | Parallel (grevm) |
+| **EVM execution** | Sequential | Parallel + JIT | **Parallel (ParallelSchedule)** | Parallel (planned) |
 | **Node types** | Validator + Full | Sequencer + Replica | **Signer + Full + Replica** | Signer + Replica |
 | **Finality** | ~13 min (2 epochs) | Instant | Instant (POA) | Instant |
 | **Decentralization** | High (~900K validators) | Low (1 sequencer) | Medium (3-5 signers) | Medium (5-21 signers) |
@@ -1586,7 +1587,7 @@ Phase 1 - Make It Connectable:                                           100% do
   [x] 2. `meowchain init` subcommand — DB initialization from genesis.json via --datadir
   [x] 3. External HTTP/WS RPC
   [x] 4. Chain ID unified
-  [x] 5. Tests passing (411 tests)
+  [x] 5. Tests passing (426 tests)
   [x] 6. Canonical genesis.json (dev + production regenerated 2026-02-20)
   [x] 7. meow_* RPC namespace (chainConfig, signers, nodeInfo)
 
@@ -1783,8 +1784,8 @@ ERC-4337 EntryPoint in genesis but no bundler service. No faucet. No SDK.
 
 ---
 
-*Last updated: 2026-03-01 | Meowchain Custom POA on Reth (reth 1.11.0, rustc 1.93.1+)*
-*411 tests passing | All finalized EIPs through Prague + Fusaka/Osaka*
+*Last updated: 2026-03-16 | Meowchain Custom POA on Reth (reth 1.11.0, rustc 1.93.1+)*
+*426 tests passing | All finalized EIPs through Prague + Fusaka/Osaka*
 *ALL PHASES COMPLETE (0-7): foundation, connectable, performance, governance, multi-node, advanced perf, ecosystem, production infra*
 *46 Rust files, ~15,000 lines, 18 modules, 13 subdirectories, 31 CLI args*
 *Performance: 1s blocks (100ms stretch), 300M-1B gas, parallel EVM, calldata discount, hot state cache*

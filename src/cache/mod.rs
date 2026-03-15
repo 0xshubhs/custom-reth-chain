@@ -14,7 +14,7 @@
 //! The cache is safe to share across threads via `Arc<Mutex<HotStateCache>>`.
 
 use alloy_primitives::{Address, B256, U256};
-use std::collections::{HashMap, VecDeque};
+use std::collections::{BTreeMap, HashMap};
 use std::sync::{Arc, Mutex};
 
 use crate::onchain::StorageReader;
@@ -63,7 +63,7 @@ impl CacheConfig {
 }
 
 /// Snapshot of cache performance counters.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct CacheStats {
     /// Number of reads that were satisfied from the cache.
     pub hits: u64,
@@ -79,6 +79,7 @@ pub struct CacheStats {
 
 impl CacheStats {
     /// Cache hit rate in the range `[0.0, 1.0]`.
+    #[inline]
     pub fn hit_rate(&self) -> f64 {
         let total = self.hits + self.misses;
         if total == 0 {
@@ -89,6 +90,7 @@ impl CacheStats {
     }
 
     /// Whether any lookups have been performed yet.
+    #[inline]
     pub fn is_cold(&self) -> bool {
         self.hits == 0 && self.misses == 0
     }
@@ -96,13 +98,25 @@ impl CacheStats {
 
 /// LRU hot state cache mapping `(Address, slot) → B256`.
 ///
-/// Internally uses a `HashMap` for O(1) lookup and a `VecDeque` to track
-/// LRU order (front = least recently used, back = most recently used).
+/// Uses a `HashMap` for O(1) value lookup and a `BTreeMap<clock, key>` as the
+/// LRU eviction index.  Every access stamps the entry with a monotonically
+/// increasing clock value so the minimum clock in the `BTreeMap` is always the
+/// least-recently-used entry.
+///
+/// Complexity:
+///   - get   → O(1) map lookup + O(log n) clock update
+///   - insert → O(1) map insert + O(log n) clock insert/eviction
+///   - invalidate_address → O(k log n) where k = matched entries
+///     (all previously O(n) with the VecDeque approach)
 #[derive(Debug)]
 pub struct HotStateCache {
-    map: HashMap<(Address, U256), B256>,
-    order: VecDeque<(Address, U256)>,
+    /// Primary value store: key → (value, current_clock).
+    map: HashMap<(Address, U256), (B256, u64)>,
+    /// Eviction index: clock → key.  The minimum clock is the LRU entry.
+    lru: BTreeMap<u64, (Address, U256)>,
     max_entries: usize,
+    /// Monotonic counter incremented on every access/insert.
+    clock: u64,
     stats: CacheStats,
 }
 
@@ -112,8 +126,9 @@ impl HotStateCache {
         assert!(max_entries > 0, "cache capacity must be > 0");
         Self {
             map: HashMap::with_capacity(max_entries),
-            order: VecDeque::with_capacity(max_entries),
+            lru: BTreeMap::new(),
             max_entries,
+            clock: 0,
             stats: CacheStats {
                 max_entries,
                 ..Default::default()
@@ -121,16 +136,25 @@ impl HotStateCache {
         }
     }
 
-    /// Look up a slot value. Updates LRU order on hit.
+    /// Advance the clock and return the new tick.
+    #[inline]
+    fn tick(&mut self) -> u64 {
+        self.clock += 1;
+        self.clock
+    }
+
+    /// Look up a slot value. Updates LRU order on hit (O(1) + O(log n)).
     pub fn get(&mut self, addr: Address, slot: U256) -> Option<B256> {
         let key = (addr, slot);
-        if let Some(&value) = self.map.get(&key) {
+        if let Some(&(value, prev_clock)) = self.map.get(&key) {
+            // Remove old position from the eviction index
+            self.lru.remove(&prev_clock);
+            // Stamp with fresh clock so this entry sorts to the MRU end
+            self.clock += 1;
+            let new_clock = self.clock;
+            self.map.insert(key, (value, new_clock));
+            self.lru.insert(new_clock, key);
             self.stats.hits += 1;
-            // Promote to MRU position
-            if let Some(pos) = self.order.iter().position(|k| *k == key) {
-                self.order.remove(pos);
-                self.order.push_back(key);
-            }
             Some(value)
         } else {
             self.stats.misses += 1;
@@ -138,45 +162,54 @@ impl HotStateCache {
         }
     }
 
-    /// Insert or update a slot value. Evicts LRU entry if at capacity.
+    /// Insert or update a slot value. Evicts LRU entry if at capacity
+    /// (O(log n)).
     pub fn insert(&mut self, addr: Address, slot: U256, value: B256) {
         let key = (addr, slot);
-        if self.map.contains_key(&key) {
-            self.map.insert(key, value);
-            // Refresh MRU position
-            if let Some(pos) = self.order.iter().position(|k| *k == key) {
-                self.order.remove(pos);
-                self.order.push_back(key);
-            }
+        if let Some(&(_, prev_clock)) = self.map.get(&key) {
+            // Update value and refresh MRU position
+            self.lru.remove(&prev_clock);
+            self.clock += 1;
+            let new_clock = self.clock;
+            self.map.insert(key, (value, new_clock));
+            self.lru.insert(new_clock, key);
         } else {
             // Evict LRU entry when at capacity
             if self.map.len() >= self.max_entries {
-                if let Some(lru_key) = self.order.pop_front() {
+                // pop_first() removes the minimum clock entry (= LRU) in one operation.
+                if let Some((_, lru_key)) = self.lru.pop_first() {
                     self.map.remove(&lru_key);
                     self.stats.evictions += 1;
                 }
             }
-            self.map.insert(key, value);
-            self.order.push_back(key);
+            let new_clock = self.tick();
+            self.map.insert(key, (value, new_clock));
+            self.lru.insert(new_clock, key);
         }
         self.stats.current_entries = self.map.len();
     }
 
     /// Invalidate all slots cached for a specific contract address.
     ///
+    /// Uses `HashMap::retain` to drain matching entries in a single pass,
+    /// collecting only the cheap `u64` clock values for a second-pass LRU
+    /// removal.  Avoids allocating the full `Vec<(key, clock)>` of the previous
+    /// implementation — only `u64`s are collected.
     /// Call this after an on-chain governance transaction modifies the contract.
     pub fn invalidate_address(&mut self, addr: Address) {
-        let to_remove: Vec<_> = self
-            .order
-            .iter()
-            .filter(|(a, _)| *a == addr)
-            .cloned()
-            .collect();
-        for key in to_remove {
-            self.map.remove(&key);
-            if let Some(pos) = self.order.iter().position(|k| *k == key) {
-                self.order.remove(pos);
+        // Governance contracts typically have ≤ ~10 slots cached; pre-allocate a
+        // small Vec to avoid re-growing during the collect pass.
+        let mut clocks_to_remove: Vec<u64> = Vec::with_capacity(16);
+        self.map.retain(|(a, _), (_, clock)| {
+            if *a == addr {
+                clocks_to_remove.push(*clock);
+                false // remove from map
+            } else {
+                true // keep
             }
+        });
+        for clock in clocks_to_remove {
+            self.lru.remove(&clock);
         }
         self.stats.current_entries = self.map.len();
     }
@@ -184,23 +217,26 @@ impl HotStateCache {
     /// Evict all entries.
     pub fn clear(&mut self) {
         self.map.clear();
-        self.order.clear();
+        self.lru.clear();
         self.stats.current_entries = 0;
     }
 
     /// Current number of entries.
+    #[inline]
     pub fn len(&self) -> usize {
         self.map.len()
     }
 
     /// Whether the cache contains no entries.
+    #[inline]
     pub fn is_empty(&self) -> bool {
         self.map.is_empty()
     }
 
     /// Snapshot of performance counters.
+    #[inline]
     pub fn stats(&self) -> CacheStats {
-        self.stats.clone()
+        self.stats
     }
 }
 
@@ -266,11 +302,13 @@ impl<R: StorageReader> CachedStorageReader<R> {
     }
 
     /// Borrow the inner reader.
+    #[inline]
     pub fn inner(&self) -> &R {
         &self.inner
     }
 
     /// Clone the underlying [`SharedCache`] handle.
+    #[inline]
     pub fn shared_cache(&self) -> SharedCache {
         Arc::clone(&self.cache)
     }
@@ -278,20 +316,27 @@ impl<R: StorageReader> CachedStorageReader<R> {
 
 impl<R: StorageReader> StorageReader for CachedStorageReader<R> {
     fn read_storage(&self, address: Address, slot: U256) -> Option<B256> {
-        // Fast path: check cache
+        // Fast path: single lock acquisition — return immediately on hit.
         {
             let mut cache = self.cache.lock().expect("cache lock poisoned");
             if let Some(v) = cache.get(address, slot) {
                 return Some(v);
             }
+            // Lock is dropped here before the potentially-blocking IO below.
         }
-        // Slow path: read from underlying storage
+
+        // Slow path: IO outside the lock so we never hold the Mutex during a
+        // potentially-blocking MDBX read.
         let value = self.inner.read_storage(address, slot)?;
-        // Populate cache for future reads
+
+        // Re-acquire the lock only to insert the freshly-fetched value.
+        // This is a single acquisition (not two), and no IO is done while
+        // holding it.
         self.cache
             .lock()
             .expect("cache lock poisoned")
             .insert(address, slot, value);
+
         Some(value)
     }
 }
@@ -428,6 +473,36 @@ mod tests {
         assert_eq!(cache.get(addr(1), slot(0)), Some(val(20)));
         assert_eq!(cache.len(), 1, "update should not create duplicate");
     }
+
+    #[test]
+    fn test_cache_update_existing_entry_promotes_to_mru() {
+        // Re-inserting an existing entry (value update) must move it to MRU
+        // so the next eviction picks a *different* entry.
+        let mut cache = HotStateCache::new(3);
+        cache.insert(addr(1), slot(0), val(1)); // LRU: [1]
+        cache.insert(addr(2), slot(0), val(2)); // LRU: [1, 2]
+        cache.insert(addr(3), slot(0), val(3)); // LRU: [1, 2, 3] — full
+
+        // Re-insert addr(1) with a new value — should promote it to MRU.
+        cache.insert(addr(1), slot(0), val(99));
+        assert_eq!(cache.len(), 3, "re-insert should not grow the cache");
+
+        // Now insert addr(4) — should evict addr(2) (new LRU), NOT addr(1).
+        cache.insert(addr(4), slot(0), val(4));
+
+        assert_eq!(
+            cache.get(addr(1), slot(0)),
+            Some(val(99)),
+            "addr(1) was promoted to MRU, should survive"
+        );
+        assert!(
+            cache.get(addr(2), slot(0)).is_none(),
+            "addr(2) should be evicted (new LRU after addr(1) was promoted)"
+        );
+        assert_eq!(cache.get(addr(3), slot(0)), Some(val(3)));
+        assert_eq!(cache.get(addr(4), slot(0)), Some(val(4)));
+    }
+
 
     #[test]
     fn test_cache_invalidate_address() {

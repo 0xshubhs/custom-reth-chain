@@ -601,3 +601,52 @@ All nodes share the same genesis and connect via bootnode discovery.
 | `configs/foundry.toml` | Foundry profile with chain RPC and chain ID |
 | `configs/networks.json` | Network registry (chain ID, RPC URLs, explorer URL) |
 | `configs/grafana-meowchain.json` | Grafana dashboard template (import with Prometheus data source) |
+
+---
+
+# Implementation Log --- 2026-03-16
+
+## Summary
+
+Zero-gas mode and GEVM cleanup. Added `--zero-gas` CLI flag for fee-free operation,
+removed all GEVM/grevm comparison content from codebase and docs.
+
+---
+
+## 12. Zero-Gas Mode (`--zero-gas`)
+
+### Design
+
+Two mechanisms combine to eliminate gas fees:
+
+1. **Genesis base fee = 0**: When `--zero-gas` is set, `genesis.base_fee_per_gas = Some(0)`.
+   EIP-1559 formula: `base_fee = parent_base_fee + parent_base_fee * gas_delta / gas_target / denominator`.
+   When parent base fee is 0, the result is always 0 — base fee stays at 0 forever.
+
+2. **revm `disable_base_fee`**: `PoaEvmFactory::patch_env()` sets `cfg_env.disable_base_fee = true`,
+   which skips base fee validation during EVM execution. This allows `gasPrice: 0` / `maxFeePerGas: 0`.
+
+Gas is still **metered** for execution limits (preventing infinite loops), but users pay nothing.
+
+### Files Changed
+
+| File | Change |
+|------|--------|
+| `src/cli.rs` | Added `--zero-gas` flag (bool) |
+| `src/evm/mod.rs` | `PoaEvmFactory.zero_gas` field; `patch_env()` sets `disable_base_fee`; 4 new tests |
+| `src/node/mod.rs` | `PoaNode.zero_gas` field + `with_zero_gas()` builder method |
+| `src/main.rs` | Sets `genesis.base_fee_per_gas = Some(0)` when enabled; wires to `PoaNode` |
+
+### Test Results
+
+```
+test result: ok. 425 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out
+```
+
+## 13. GEVM/grevm Cleanup
+
+Removed all GEVM comparison content:
+- Deleted `md/GEVM-Comparison.md` (651 lines) and `md/EVM-Design.md` (1627 lines)
+- Removed GEVM comparison tests and helper functions from `src/evm/bench.rs`
+- Cleaned grevm references from `src/evm/parallel.rs` module docs
+- Removed sections 16-17, 20 from `md/Remaining.md` (GEVM ranking, comparison tables, lessons)

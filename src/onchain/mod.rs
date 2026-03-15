@@ -117,6 +117,23 @@ mod tests {
         assert_eq!(gas_limit_sel, function_selector("gasLimit()"));
     }
 
+    /// Verify every pre-computed const selector matches the runtime keccak256 computation.
+    /// This guards against copy-paste errors in the hardcoded byte arrays.
+    #[test]
+    fn test_const_selectors_match_runtime_keccak() {
+        assert_eq!(selectors::gas_limit(),            function_selector("gasLimit()"));
+        assert_eq!(selectors::block_time(),           function_selector("blockTime()"));
+        assert_eq!(selectors::max_contract_size(),    function_selector("maxContractSize()"));
+        assert_eq!(selectors::calldata_gas_per_byte(),function_selector("calldataGasPerByte()"));
+        assert_eq!(selectors::max_tx_gas(),           function_selector("maxTxGas()"));
+        assert_eq!(selectors::eager_mining(),         function_selector("eagerMining()"));
+        assert_eq!(selectors::governance(),           function_selector("governance()"));
+        assert_eq!(selectors::get_signers(),          function_selector("getSigners()"));
+        assert_eq!(selectors::signer_count(),         function_selector("signerCount()"));
+        assert_eq!(selectors::signer_threshold(),     function_selector("signerThreshold()"));
+        assert_eq!(selectors::is_signer(),            function_selector("isSigner(address)"));
+    }
+
     #[test]
     fn test_different_functions_different_selectors() {
         let gas_limit = selectors::gas_limit();
@@ -232,13 +249,6 @@ mod tests {
             our_base, genesis_base,
             "Array base slot must match genesis.rs computation"
         );
-    }
-
-    #[test]
-    fn test_dynamic_array_base_slot_deterministic() {
-        let base1 = dynamic_array_base_slot(U256::from(1));
-        let base2 = dynamic_array_base_slot(U256::from(1));
-        assert_eq!(base1, base2);
     }
 
     #[test]

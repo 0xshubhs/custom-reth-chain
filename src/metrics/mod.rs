@@ -40,6 +40,7 @@ pub struct BlockMetrics {
 
 impl BlockMetrics {
     /// Total time from build start to signed block.
+    #[inline]
     pub fn total_duration(&self) -> Duration {
         self.build_duration + self.sign_duration
     }
@@ -103,6 +104,7 @@ impl<T: Copy + Default> SlidingWindow<T> {
         }
     }
 
+    #[inline]
     fn push(&mut self, value: T) {
         self.buf[self.head] = value;
         self.head = (self.head + 1) % self.capacity;
@@ -111,14 +113,17 @@ impl<T: Copy + Default> SlidingWindow<T> {
         }
     }
 
+    #[inline]
     fn values(&self) -> &[T] {
         &self.buf[..self.count]
     }
 
+    #[inline]
     fn len(&self) -> usize {
         self.count
     }
 
+    #[inline]
     fn is_empty(&self) -> bool {
         self.count == 0
     }
@@ -151,6 +156,7 @@ pub struct MetricsSnapshot {
 
 impl MetricsSnapshot {
     /// Fraction of blocks produced in-turn.
+    #[inline]
     pub fn in_turn_rate(&self) -> f64 {
         if self.total_blocks == 0 {
             0.0
@@ -312,16 +318,19 @@ impl ChainMetrics {
     }
 
     /// Total blocks recorded so far.
+    #[inline]
     pub fn total_blocks(&self) -> u64 {
         self.total_blocks.load(Ordering::Relaxed)
     }
 
     /// Total transactions processed.
+    #[inline]
     pub fn total_txs(&self) -> u64 {
         self.total_txs.load(Ordering::Relaxed)
     }
 
     /// Configured rolling window size.
+    #[inline]
     pub fn window_size(&self) -> usize {
         self.window_size
     }
@@ -342,6 +351,7 @@ pub struct PhaseTimer {
 
 impl PhaseTimer {
     /// Start timing.
+    #[inline]
     pub fn start() -> Self {
         Self {
             start: Instant::now(),
@@ -349,11 +359,13 @@ impl PhaseTimer {
     }
 
     /// Return elapsed duration since `start()`.
+    #[inline]
     pub fn elapsed(&self) -> Duration {
         self.start.elapsed()
     }
 
     /// Return elapsed milliseconds.
+    #[inline]
     pub fn elapsed_ms(&self) -> u64 {
         self.start.elapsed().as_millis() as u64
     }
@@ -365,7 +377,9 @@ fn average(window: &SlidingWindow<u64>) -> f64 {
     if window.is_empty() {
         return 0.0;
     }
-    let sum: u64 = window.values().iter().sum();
+    // `.copied()` avoids a layer of reference indirection for the `Copy` type
+    // `u64`; the compiler can then fold the sum into a tighter loop.
+    let sum: u64 = window.values().iter().copied().sum();
     sum as f64 / window.len() as f64
 }
 

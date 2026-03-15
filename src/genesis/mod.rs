@@ -61,20 +61,14 @@ impl Default for GenesisConfig {
 impl GenesisConfig {
     /// Create a development configuration with prefunded accounts
     pub fn dev() -> Self {
-        let accounts = dev_accounts();
-        let signers = dev_signers();
-
         let balance = default_prefund_balance();
-        let mut prefunded = BTreeMap::new();
-        for account in accounts {
-            prefunded.insert(account, balance);
-        }
+        let prefunded = dev_accounts().into_iter().map(|a| (a, balance)).collect();
 
         Self {
             chain_id: 9323310,
             gas_limit: 300_000_000, // Phase 2: 300M gas limit (MegaETH-inspired, 10x Ethereum mainnet)
             prefunded_accounts: prefunded,
-            signers,
+            signers: dev_signers(),
             block_period: 1, // Phase 2: 1-second blocks
             epoch: 30000,
             vanity: [0u8; 32],
@@ -103,16 +97,18 @@ impl GenesisConfig {
     /// - Treasury, operations, and community accounts prefunded
     /// - "Meowchain" vanity in genesis block
     pub fn production() -> Self {
-        let signers = dev_accounts().into_iter().take(5).collect::<Vec<_>>();
+        let accounts = dev_accounts();
+        let signers = accounts[..5].to_vec();
 
+        let eth = U256::from(10u64).pow(U256::from(18u64)); // 1 ETH in wei
         // Treasury: 2,500,000 ETH - ecosystem development fund
-        let treasury_balance = U256::from(2_500_000u64) * U256::from(10u64).pow(U256::from(18u64));
+        let treasury_balance = U256::from(2_500_000u64) * eth;
         // Operations: 500,000 ETH - infrastructure and running costs
-        let operations_balance = U256::from(500_000u64) * U256::from(10u64).pow(U256::from(18u64));
+        let operations_balance = U256::from(500_000u64) * eth;
         // Community: 100,000 ETH - faucet, airdrops, grants
-        let community_balance = U256::from(100_000u64) * U256::from(10u64).pow(U256::from(18u64));
+        let community_balance = U256::from(100_000u64) * eth;
         // Signer gas: 10,000 ETH per signer - for block production gas costs
-        let signer_balance = U256::from(10_000u64) * U256::from(10u64).pow(U256::from(18u64));
+        let signer_balance = U256::from(10_000u64) * eth;
 
         let mut prefunded = BTreeMap::new();
 
@@ -122,11 +118,11 @@ impl GenesisConfig {
         }
 
         // Treasury (account index 5)
-        prefunded.insert(dev_accounts()[5], treasury_balance);
+        prefunded.insert(accounts[5], treasury_balance);
         // Operations (account index 6)
-        prefunded.insert(dev_accounts()[6], operations_balance);
+        prefunded.insert(accounts[6], operations_balance);
         // Community/Faucet (account index 7)
-        prefunded.insert(dev_accounts()[7], community_balance);
+        prefunded.insert(accounts[7], community_balance);
 
         // "Meowchain" as vanity data
         let mut vanity = [0u8; 32];
@@ -193,19 +189,11 @@ pub fn create_genesis(config: GenesisConfig) -> Genesis {
     extra_data.extend_from_slice(&[0u8; 65]);
 
     // Convert prefunded accounts to genesis alloc format
-    let mut alloc = BTreeMap::new();
-    for (address, balance) in config.prefunded_accounts {
-        alloc.insert(
-            address,
-            GenesisAccount {
-                balance,
-                nonce: None,
-                code: None,
-                storage: None,
-                private_key: None,
-            },
-        );
-    }
+    let mut alloc: BTreeMap<Address, GenesisAccount> = config
+        .prefunded_accounts
+        .into_iter()
+        .map(|(addr, balance)| (addr, GenesisAccount { balance, ..Default::default() }))
+        .collect();
 
     // Add system contracts required by Cancun/Prague hardforks
     alloc.extend(contracts::system_contract_alloc());

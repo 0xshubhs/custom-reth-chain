@@ -6,7 +6,7 @@ Custom POA blockchain on Reth. Chain ID **9323310**, all hardforks through Pragu
 
 ```
 custom-reth-chain-/
-├── src/                            # Rust source code (~15,000 lines, 46 files, 411 tests)
+├── src/                            # Rust source code (~15,000 lines, 46 files, 425 tests)
 │   ├── main.rs                     # Entry point, block monitoring
 │   ├── lib.rs                      # Library root (module declarations)
 │   ├── cli.rs                      # Cli struct (clap args)
@@ -137,6 +137,7 @@ Options:
   --gas-limit <N>             Override block gas limit (e.g., 300000000 for 300M)
   --max-contract-size <BYTES> Override EIP-170 24KB contract size limit (e.g., 524288 for 512KB)
   --calldata-gas <N>          Gas per non-zero calldata byte [1-16, default: 4] (4=POA, 16=mainnet)
+  --zero-gas                  Zero-gas mode: base fee=0, gasPrice=0 accepted (no fees)
   --block-time-ms <MS>        Sub-second block interval in ms [default: 0 = use --block-time]
                               Examples: 500 (2/s), 200 (5/s), 100 (10/s)
   --cache-size <N>            Hot state cache entries [default: 1024]
@@ -297,6 +298,7 @@ just run-custom -- --production --mining --block-time 1 --signer-key <KEY>
 | Epoch | 30,000 blocks | 30,000 blocks |
 | P2P port | 30303 | 30303 |
 | Mining | Auto (interval) | Engine API or `--mining` flag |
+| Gas fees | EIP-1559 (or `--zero-gas` for free) | EIP-1559 (or `--zero-gas` for free) |
 
 ## RPC Endpoints
 
@@ -620,6 +622,27 @@ cargo run --release -- --calldata-gas 1
 cargo run --release -- --calldata-gas 16
 ```
 
+### Zero-Gas Mode
+
+Run the chain with no gas fees. Transactions still have gas limits (preventing infinite loops), but users pay nothing. Useful for private/consortium chains.
+
+```bash
+# Enable zero-gas mode (base fee=0, gasPrice=0 accepted)
+cargo run --release -- --zero-gas
+
+# Combine with other flags
+cargo run --release -- --zero-gas --gas-limit 1000000000 --block-time 1
+
+# Production + zero-gas
+cargo run --release -- --production --mining --zero-gas
+```
+
+When `--zero-gas` is enabled:
+- Genesis `base_fee_per_gas` is set to 0 (stays 0 forever via EIP-1559 formula)
+- revm's `disable_base_fee` is set in CfgEnv (skips base fee validation)
+- Transactions with `gasPrice: 0` / `maxFeePerGas: 0` are accepted
+- Gas is still metered for execution limits (no infinite loops)
+
 ### Metrics Output
 
 ```bash
@@ -827,7 +850,7 @@ rm -rf data/
 ### Running Tests
 
 ```bash
-# Run all 411 tests (with cargo update)
+# Run all 425 tests (with cargo update)
 just test
 
 # Run tests without cargo update (faster)
@@ -865,7 +888,7 @@ cargo test validate_header     # All header validation tests
 cargo test json_serialization  # All JSON serialization tests
 ```
 
-### Test Suite Overview (411 tests)
+### Test Suite Overview (425 tests)
 
 All tests run in ~0.4s. No external services, databases, or network access needed.
 
@@ -1160,4 +1183,4 @@ Tests the state diff builder for replica state streaming.
 
 **Async tests:** RPC tests use `#[tokio::test]` for async method testing. Keystore and signer tests use async for concurrent access verification.
 
-*Last updated: 2026-02-24 | Chain ID 9323310 | reth 1.11.0 | 411 tests passing | ~15,000 lines | 46 files*
+*Last updated: 2026-03-16 | Chain ID 9323310 | reth 1.11.0 | 425 tests passing | ~15,000 lines | 46 files*

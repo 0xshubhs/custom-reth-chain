@@ -50,6 +50,19 @@ impl SignerManager {
         self.signers.read().await.keys().copied().collect()
     }
 
+    /// Get the number of registered signers without allocating a Vec.
+    pub async fn signer_count(&self) -> usize {
+        self.signers.read().await.len()
+    }
+
+    /// Check if we have a signer for any address in the given set.
+    /// Returns the first matching address, or None.
+    /// Avoids allocating a Vec of all signer addresses.
+    pub async fn first_signer_in(&self, authorized: &[Address]) -> Option<Address> {
+        let signers = self.signers.read().await;
+        authorized.iter().find(|a| signers.contains_key(*a)).copied()
+    }
+
     /// Sign a message hash with the specified signer
     pub async fn sign_hash(&self, address: &Address, hash: B256) -> Result<Signature, SignerError> {
         let signers = self.signers.read().await;

@@ -1,7 +1,7 @@
 Where Meowchain stands today
 
 
- 1.  You have a solid foundation — signed POA blocks, 339 tests, governance contracts in genesis, ERC-4337, Gnosis Safe, all hardforks through Prague. That's
+ 1.  You have a solid foundation — signed POA blocks, 425 tests, governance contracts in genesis, ERC-4337, Gnosis Safe, all hardforks through Prague. That's
   more than most chains had at launch. But there's a massive gap between "it compiles" and "people want to build on it."
 
   ---
@@ -109,7 +109,7 @@ Where Meowchain stands today
 
   Tier 3: What makes you stand out (months 3-6)
 
-  13. Parallel EVM (grevm) — This is your MegaETH-inspired play. 5-10x throughput boost. Reth already has the foundation.
+  13. Parallel EVM — 5-10x throughput boost. Foundation ready in `parallel.rs` (ConflictDetector, ParallelSchedule).
   14. ERC-8004 AI Agent infrastructure — This is genuinely differentiated. If you're the first chain with native AI agent registries, you attract an
   entirely new class of builders. Deploy Identity + Reputation + Validation registries.
   15. Native account abstraction paymaster — Sponsor gas for new users. "Deploy on Meowchain, your users never pay gas" is a powerful pitch.
@@ -155,7 +155,7 @@ Where Meowchain stands today
     - Subgraph node
 
   Week 9-12: Differentiation
-    - Parallel EVM (grevm) — 5K+ TPS
+    - Parallel EVM — 5K+ TPS
     - ERC-8004 AI agent registries
     - Gas sponsorship/paymaster
     - 300M+ gas limit with stability proof

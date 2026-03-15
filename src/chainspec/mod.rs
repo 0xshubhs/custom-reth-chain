@@ -77,17 +77,20 @@ impl PoaChainSpec {
     }
 
     /// Returns the inner ChainSpec
+    #[inline]
     pub fn inner(&self) -> &Arc<ChainSpec> {
         &self.inner
     }
 
     /// Returns the POA configuration
+    #[inline]
     pub fn poa_config(&self) -> &PoaConfig {
         &self.poa_config
     }
 
     /// Returns the genesis/config signer list (static fallback).
     /// Prefer `effective_signers()` for production code that should respect live governance.
+    #[inline]
     pub fn signers(&self) -> &[Address] {
         &self.poa_config.signers
     }
@@ -97,11 +100,12 @@ impl PoaChainSpec {
     /// Updated by `PoaPayloadBuilder` at every epoch block after reading `SignerRegistry`.
     /// `PoaConsensus` and block production both use this to respect live governance changes.
     pub fn effective_signers(&self) -> Vec<Address> {
-        self.live_signers
-            .read()
-            .ok()
-            .and_then(|g| g.clone())
-            .unwrap_or_else(|| self.poa_config.signers.clone())
+        if let Ok(guard) = self.live_signers.read() {
+            if let Some(ref v) = *guard {
+                return v.clone();
+            }
+        }
+        self.poa_config.signers.clone()
     }
 
     /// Update the live signer list from the on-chain SignerRegistry contract.
@@ -115,20 +119,22 @@ impl PoaChainSpec {
     }
 
     /// Whether the live signer cache has been populated from on-chain data.
+    #[inline]
     pub fn has_live_signers(&self) -> bool {
         self.live_signers
             .read()
-            .ok()
-            .and_then(|g| g.as_ref().map(|_| ()))
-            .is_some()
+            .map(|g| g.is_some())
+            .unwrap_or(false)
     }
 
     /// Returns the block period in seconds
+    #[inline]
     pub fn block_period(&self) -> u64 {
         self.poa_config.period
     }
 
     /// Returns the epoch length
+    #[inline]
     pub fn epoch(&self) -> u64 {
         self.poa_config.epoch
     }
@@ -140,21 +146,39 @@ impl PoaChainSpec {
     }
 
     /// Check if an address is an authorized signer (uses live on-chain list if available).
+    ///
+    /// Avoids cloning the signer list — checks membership while holding the read lock.
+    #[inline]
     pub fn is_authorized_signer(&self, address: &Address) -> bool {
-        self.effective_signers().contains(address)
+        if let Ok(guard) = self.live_signers.read() {
+            if let Some(ref signers) = *guard {
+                return signers.contains(address);
+            }
+        }
+        self.poa_config.signers.contains(address)
     }
 
     /// Get the expected in-turn signer for a given block number (round-robin).
     ///
     /// Uses the effective signer list (live on-chain if synced, else genesis config).
-    /// Returns `Address` by value (not a reference) since the list may come from `RwLock`.
+    /// Avoids cloning — reads directly while holding the lock.
+    #[inline]
     pub fn expected_signer(&self, block_number: u64) -> Option<Address> {
-        let signers = self.effective_signers();
+        if let Ok(guard) = self.live_signers.read() {
+            if let Some(ref signers) = *guard {
+                if signers.is_empty() {
+                    return None;
+                }
+                let index = (block_number as usize) % signers.len();
+                return Some(signers[index]);
+            }
+        }
+        let signers = &self.poa_config.signers;
         if signers.is_empty() {
             return None;
         }
         let index = (block_number as usize) % signers.len();
-        signers.into_iter().nth(index)
+        Some(signers[index])
     }
 }
 

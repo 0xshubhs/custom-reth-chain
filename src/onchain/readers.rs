@@ -71,6 +71,7 @@ pub fn read_chain_config(reader: &impl StorageReader) -> Option<DynamicChainConf
 }
 
 /// Read just the gas limit from ChainConfig (hot path for payload builder).
+#[inline]
 pub fn read_gas_limit(reader: &impl StorageReader) -> Option<u64> {
     reader
         .read_storage(CHAIN_CONFIG_ADDRESS, chain_config_slots::GAS_LIMIT)
@@ -78,6 +79,7 @@ pub fn read_gas_limit(reader: &impl StorageReader) -> Option<u64> {
 }
 
 /// Read just the block time from ChainConfig.
+#[inline]
 pub fn read_block_time(reader: &impl StorageReader) -> Option<u64> {
     reader
         .read_storage(CHAIN_CONFIG_ADDRESS, chain_config_slots::BLOCK_TIME)
@@ -99,11 +101,14 @@ pub fn read_signer_list(reader: &impl StorageReader) -> Option<DynamicSignerList
     let base_slot = dynamic_array_base_slot(signer_registry_slots::SIGNERS_LENGTH);
 
     let mut signers = Vec::with_capacity(signer_count);
-    for i in 0..signer_count {
-        let slot = base_slot + U256::from(i);
+    // Increment a U256 slot counter directly instead of calling U256::from(i)
+    // on each iteration — avoids a 256-bit construction per loop iteration.
+    let mut slot = base_slot;
+    for _ in 0..signer_count {
         if let Some(val) = reader.read_storage(addr, slot) {
             signers.push(decode_address(val));
         }
+        slot += U256::ONE;
     }
 
     Some(DynamicSignerList {

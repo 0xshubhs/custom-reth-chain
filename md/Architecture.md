@@ -1,7 +1,7 @@
 # Meowchain Architecture
 
 > Comprehensive architecture documentation for the Meowchain POA blockchain built on Reth.
-> ~46 Rust source files | ~15,000 lines | 411 tests | Chain ID 9323310
+> ~47 Rust source files | ~16,200 lines | 426 tests | Chain ID 9323310 | 34 CLI args
 
 ---
 
@@ -114,7 +114,7 @@ graph TB
 | Difficulty | Dynamic | Always 0 (Engine API compat) |
 | Governance | EIPs + social consensus | On-chain contracts + Gnosis Safe |
 | Gas Limit | ~30M (protocol) | Governable (300M dev / 1B prod via ChainConfig + --max-contract-size) |
-| EVM | Sequential | Sequential (parallel planned) |
+| EVM | Sequential | PoaEvmFactory: configurable contract size, calldata gas, zero-gas mode |
 | Hardforks | Frontier through Prague | All active at genesis (block 0) |
 
 ---
@@ -139,7 +139,7 @@ graph TD
     LIB --> CACHE_MOD["cache/<br/>1 file — HotStateCache, SharedCache"]
     LIB --> METRICS_MOD["metrics/<br/>2 files — PhaseTimer, BlockMetrics, ChainMetrics, MetricsRegistry"]
     LIB --> STATEDIFF_MOD["statediff/<br/>1 file — StateDiff, AccountDiff"]
-    LIB --> CLI_MOD["cli.rs<br/>175 lines"]
+    LIB --> CLI_MOD["cli.rs<br/>212 lines"]
     LIB --> CONST["constants.rs<br/>11 lines"]
     LIB --> ERR["errors.rs<br/>2 lines"]
     LIB --> OUT["output.rs<br/>255 lines"]
@@ -195,87 +195,88 @@ graph TD
 
 ```
 src/
-├── lib.rs                    (20 lines)    Root module declarations (18 modules)
-├── main.rs                   (310 lines)   Entry point, CLI, node launch, block monitoring, graceful shutdown
-├── cli.rs                    (175 lines)   CLI argument definitions (31 args, clap)
+├── lib.rs                    (22 lines)    Root module declarations (18 modules)
+├── main.rs                   (526 lines)   Entry point, CLI, node launch, block monitoring, graceful shutdown
+├── cli.rs                    (212 lines)   CLI argument definitions (34 args, clap)
 ├── constants.rs              (11 lines)    Shared constants (EXTRA_VANITY, EXTRA_SEAL, etc.)
 ├── errors.rs                 (2 lines)     Re-exports PoaConsensusError + SignerError
-├── output.rs                 (255 lines)   Colored console output (20 functions)
+├── output.rs                 (424 lines)   Colored console output (20 functions)
 │
 ├── node/                                   Node type & component wiring
-│   ├── mod.rs                (255 lines)   PoaNode, NodeTypes, Node impl, DebugNode
-│   ├── builder.rs            (56 lines)    PoaConsensusBuilder (ConsensusBuilder trait)
-│   └── engine.rs             (148 lines)   PoaEngineValidator (97-byte extra_data bypass)
+│   ├── mod.rs                (304 lines)   PoaNode, NodeTypes, Node impl, DebugNode
+│   ├── builder.rs            (63 lines)    PoaConsensusBuilder (ConsensusBuilder trait)
+│   └── engine.rs             (150 lines)   PoaEngineValidator (97-byte extra_data bypass)
 │
 ├── consensus/                              POA consensus validation
-│   ├── mod.rs                (2,022 lines) PoaConsensus, HeaderValidator, Consensus, FullConsensus
+│   ├── mod.rs                (2,110 lines) PoaConsensus, HeaderValidator, Consensus, FullConsensus
 │   └── errors.rs             (67 lines)    PoaConsensusError (8 variants)
 │
 ├── payload/                                Block production & signing
-│   ├── mod.rs                (449 lines)   PoaPayloadBuilder, PayloadBuilder trait, sign_payload
-│   └── builder.rs            (131 lines)   PoaPayloadBuilderBuilder (component-level builder)
+│   ├── mod.rs                (550 lines)   PoaPayloadBuilder, PayloadBuilder trait, sign_payload
+│   └── builder.rs            (148 lines)   PoaPayloadBuilderBuilder (component-level builder)
 │
 ├── chainspec/                              Chain specification
-│   ├── mod.rs                (602 lines)   PoaChainSpec, live_signers, trait impls
+│   ├── mod.rs                (672 lines)   PoaChainSpec, live_signers, trait impls
 │   ├── config.rs             (24 lines)    PoaConfig struct
-│   └── hardforks.rs          (36 lines)    mainnet_compatible_hardforks()
+│   └── hardforks.rs          (54 lines)    mainnet_compatible_hardforks()
 │
 ├── signer/                                 Key management & block sealing
-│   ├── mod.rs                (363 lines)   Integration tests for signing
-│   ├── manager.rs            (77 lines)    SignerManager (RwLock<HashMap>)
-│   ├── sealer.rs             (103 lines)   BlockSealer (seal_header, verify_signature)
+│   ├── mod.rs                (381 lines)   Integration tests for signing
+│   ├── manager.rs            (89 lines)    SignerManager (RwLock<HashMap>)
+│   ├── sealer.rs             (110 lines)   BlockSealer (seal_header, verify_signature)
 │   ├── errors.rs             (18 lines)    SignerError (3 variants)
 │   └── dev.rs                (40 lines)    Dev keys & setup_dev_signers()
 │
 ├── genesis/                                Genesis configuration & contracts
-│   ├── mod.rs                (898 lines)   GenesisConfig, create_genesis, tests
+│   ├── mod.rs                (1,025 lines) GenesisConfig, create_genesis, tests
 │   ├── accounts.rs           (38 lines)    dev_accounts(), dev_signers(), balances
-│   ├── addresses.rs          (46 lines)    Contract address constants
-│   ├── contracts.rs          (276 lines)   System/infra/Safe contract alloc
-│   └── governance.rs         (266 lines)   ChainConfig/SignerRegistry/Treasury alloc
+│   ├── addresses.rs          (44 lines)    Contract address constants
+│   ├── contracts.rs          (226 lines)   System/infra/Safe contract alloc
+│   └── governance.rs         (206 lines)   ChainConfig/SignerRegistry/Treasury alloc
 │
 ├── onchain/                                On-chain governance readers
-│   ├── mod.rs                (831 lines)   StorageReader trait, tests
-│   ├── providers.rs          (54 lines)    StateProviderStorageReader, GenesisStorageReader
-│   ├── readers.rs            (144 lines)   read_gas_limit, read_signer_list, etc.
+│   ├── mod.rs                (977 lines)   StorageReader trait, tests
+│   ├── providers.rs          (56 lines)    StateProviderStorageReader, GenesisStorageReader
+│   ├── readers.rs            (149 lines)   read_gas_limit, read_signer_list, etc.
 │   ├── slots.rs              (55 lines)    Storage slot constants
-│   ├── selectors.rs          (24 lines)    ABI function selectors
-│   └── helpers.rs            (54 lines)    encode/decode helpers
+│   ├── selectors.rs          (51 lines)    ABI function selectors
+│   └── helpers.rs            (67 lines)    encode/decode helpers
 │
 ├── rpc/                                    Custom RPC namespaces (meow_*, clique_*, admin_*)
-│   ├── mod.rs                (257 lines)   MeowRpc impl + tests
+│   ├── mod.rs                (268 lines)   MeowRpc impl + tests
 │   ├── api.rs                (20 lines)    MeowApi trait (jsonrpsee macro)
 │   ├── types.rs              (29 lines)    ChainConfigResponse, NodeInfoResponse
-│   ├── clique.rs             (~350 lines)  CliqueRpc (8 methods, 28 tests)
-│   ├── clique_types.rs       (~80 lines)   CliqueSnapshot, CliqueStatus, CliqueProposal
-│   ├── admin.rs              (~300 lines)  AdminRpc (5 methods + health, 24 tests)
-│   └── admin_types.rs        (~60 lines)   AdminNodeInfo, PeerInfo, HealthResponse
+│   ├── clique.rs             (642 lines)   CliqueRpc (8 methods, 28 tests)
+│   ├── clique_types.rs       (76 lines)    CliqueSnapshot, CliqueStatus, CliqueProposal
+│   ├── admin.rs              (584 lines)   AdminRpc (5 methods + health, 24 tests)
+│   └── admin_types.rs        (125 lines)   AdminNodeInfo, PeerInfo, HealthResponse
 │
-├── evm/                                    Custom EVM factory + parallel scheduler (Phase 2)
-│   ├── mod.rs                (~200 lines)  PoaEvmFactory (patches CfgEnv), PoaExecutorBuilder, CalldataDiscountInspector
-│   └── parallel.rs           (~250 lines)  TxAccessRecord, ConflictDetector, ParallelSchedule (grevm-ready)
+├── evm/                                    Custom EVM factory + parallel scheduler + bench (Phase 2)
+│   ├── mod.rs                (504 lines)   PoaEvmFactory (patches CfgEnv: contract size, calldata gas, zero-gas), PoaExecutorBuilder, CalldataDiscountInspector (17 tests)
+│   ├── parallel.rs           (508 lines)   TxAccessRecord, ConflictDetector, ParallelSchedule (25 tests)
+│   └── bench.rs              (1,090 lines) EVM micro-benchmarks and parallel schedule throughput tests (12 tests)
 │
-├── cache/                                  Hot state LRU cache — wired into payload builder (Phase 5)
-│   └── mod.rs                (~600 lines)  HotStateCache, CachedStorageReader, SharedCache (16 tests)
+├── cache/                                  Hot state LRU cache — HashMap + BTreeMap (clock-based LRU) (Phase 5)
+│   └── mod.rs                (643 lines)   HotStateCache, CachedStorageReader, SharedCache (20 tests)
 │
 ├── keystore/                               EIP-2335 encrypted key storage (Phase 7)
-│   └── mod.rs                (~400 lines)  KeystoreManager (PBKDF2+AES-128-CTR, 20 tests)
+│   └── mod.rs                (965 lines)   KeystoreManager (PBKDF2+AES-128-CTR, 20 tests)
 │
 ├── statediff/                              State diff — built per block from execution_outcome() (Phase 5)
-│   └── mod.rs                (~620 lines)  StateDiff, AccountDiff, StorageSlotDiff, StateDiffBuilder (20 tests)
+│   └── mod.rs                (653 lines)   StateDiff, AccountDiff, StorageSlotDiff, StateDiffBuilder (28 tests)
 │
 └── metrics/                                Performance metrics + Prometheus registry (Phase 5+7)
-    ├── mod.rs                (~600 lines)  PhaseTimer, BlockMetrics, ChainMetrics (rolling window, 14 tests)
-    └── registry.rs           (~350 lines)  MetricsRegistry (19 atomic counters, TCP HTTP Prometheus server, 16 tests)
+    ├── mod.rs                (595 lines)   PhaseTimer, BlockMetrics, ChainMetrics (rolling window, 19 tests)
+    └── registry.rs           (640 lines)   MetricsRegistry (19 atomic counters, TCP HTTP Prometheus server, 16 tests)
 ```
 
-**Total: ~46 files, ~15,000 lines, 411 tests**
+**Total: ~47 files, ~16,200 lines, 426 tests**
 
 ---
 
 ## 4. Node Boot Sequence
 
-The entire startup flow is driven by `main.rs` (259 lines). Here is the exact sequence:
+The entire startup flow is driven by `main.rs` (526 lines). Here is the exact sequence:
 
 ```mermaid
 sequenceDiagram
@@ -350,6 +351,24 @@ sequenceDiagram
 | `--port` | `u16` | `30303` | P2P listener port |
 | `--bootnodes` | `Option<Vec>` | - | Bootnode enode URLs |
 | `--disable-discovery` | `bool` | `false` | Disable P2P discovery |
+| `--max-contract-size` | `usize` | `0` (24KB) | Override EIP-170 contract size limit |
+| `--calldata-gas` | `u64` | `4` | Gas/byte for non-zero calldata [1-16] |
+| `--zero-gas` | `bool` | `false` | Zero-gas mode (no fees, gasPrice=0) |
+| `--block-time-ms` | `u64` | `0` | Sub-second block interval in ms |
+| `--cache-size` | `usize` | `1024` | Hot state LRU cache entries |
+| `--metrics-interval` | `u64` | `10` | Print metrics every N blocks |
+| `--enable-metrics` | `bool` | `false` | Enable Prometheus HTTP server |
+| `--metrics-port` | `u16` | `9001` | Prometheus metrics port |
+| `--http-corsdomain` | `Option` | - | CORS allowed origins |
+| `--http-api` | `String` | `eth,net,web3` | HTTP RPC namespaces |
+| `--ws-api` | `String` | `eth,net,web3` | WS RPC namespaces |
+| `--log-json` | `bool` | `false` | Structured JSON logging |
+| `--rpc-max-connections` | `u32` | `500` | Max concurrent RPC connections |
+| `--rpc-max-request-size` | `u32` | `15` | Max request size (MB) |
+| `--rpc-max-response-size` | `u32` | `160` | Max response size (MB) |
+| `--archive` | `bool` | `false` | Archive mode (no pruning) |
+| `--gpo-blocks` | `u32` | `20` | Gas price oracle sample blocks |
+| `--gpo-percentile` | `u32` | `60` | Gas price oracle percentile |
 
 ---
 
@@ -397,7 +416,7 @@ classDiagram
         +pool: EthereumPoolBuilder
         +payload: BasicPayloadServiceBuilder~PoaPayloadBuilderBuilder~
         +network: EthereumNetworkBuilder
-        +executor: EthereumExecutorBuilder
+        +executor: PoaExecutorBuilder
         +consensus: PoaConsensusBuilder
     }
 
@@ -422,7 +441,7 @@ classDiagram
 | Payload Builder | `EthereumPayloadBuilder` | `PoaPayloadBuilder` (wraps inner) | Adds POA signing to built blocks |
 | Engine Validator | `EthereumEngineValidator` | `PoaEngineValidator` | Bypasses 32-byte extra_data limit |
 | Transaction Pool | `EthereumPoolBuilder` | *(reused)* | Standard Ethereum tx pool |
-| EVM Executor | `EthereumExecutorBuilder` | *(reused)* | Identical EVM execution |
+| EVM Executor | `EthereumExecutorBuilder` | `PoaExecutorBuilder` (wraps `PoaEvmFactory`) | Contract size limits, calldata gas discount, zero-gas mode |
 | Network | `EthereumNetworkBuilder` | *(reused)* | Standard devp2p |
 | Eth RPC | `EthereumEthApiBuilder` | *(reused)* + `MeowRpc` addon | Standard eth_* + meow_* |
 
@@ -1173,7 +1192,7 @@ let result = tokio::task::block_in_place(|| {
 
 ## 15. Console Output
 
-The `output.rs` module (255 lines) provides 20 colored console output functions organized by context.
+The `output.rs` module (424 lines) provides 20 colored console output functions organized by context.
 
 ### Color Scheme
 
@@ -1279,7 +1298,8 @@ PoaPayloadBuilder::sign_payload()
 | Max Tx Gas | 30M | 60M | ChainConfig | Yes (ChainConfig) |
 | Eager Mining | false | false | CLI `--eager-mining` / ChainConfig | Yes (ChainConfig) |
 | Coinbase | Miner Proxy | Miner Proxy | Genesis | No |
-| Base Fee | 0.875 gwei | 0.875 gwei | Genesis | No (EIP-1559) |
+| Base Fee | 0.875 gwei | 0.875 gwei | Genesis | No (EIP-1559); `--zero-gas` sets to 0 |
+| Zero-Gas Mode | false | false | CLI `--zero-gas` | No |
 | Difficulty | 0 | 0 | Hardcoded | No |
 | HTTP RPC | 0.0.0.0:8545 | 0.0.0.0:8545 | CLI | No |
 | WS RPC | 0.0.0.0:8546 | 0.0.0.0:8546 | CLI | No |
@@ -1352,7 +1372,7 @@ fn seal_hash(header: &Header) -> B256 {
 | `genesis/mod.rs` | ~33 | Contract presence, storage values, alloc counts, bytecode verification |
 | `rpc/clique.rs` | ~28 | getSigners, propose, discard, snapshot, status, proposals |
 | `chainspec/mod.rs` | ~27 | Round-robin, hardforks, live signers, trait delegation |
-| `evm/mod.rs` + `parallel.rs` | 41 | PoaEvmFactory, CalldataDiscountInspector, TxAccessRecord, ConflictDetector, ParallelSchedule |
+| `evm/mod.rs` + `parallel.rs` + `bench.rs` | 54 | PoaEvmFactory, CalldataDiscountInspector, TxAccessRecord, ConflictDetector, ParallelSchedule, EVM benchmarks |
 | `rpc/admin.rs` | 24 | nodeInfo, peers, addPeer, removePeer, health check |
 | `signer/mod.rs` | 21 | Sign/verify, concurrent signing, key management, dev signers |
 | `keystore/mod.rs` | 20 | create_account, import_key, decrypt_key, list_accounts, delete_account |
@@ -1561,7 +1581,7 @@ GitHub Actions workflow (`.github/workflows/ci.yml`) runs on every push and pull
 ```mermaid
 graph LR
     PUSH["Push / PR"] --> CHECK["cargo check<br/>(compile errors)"]
-    CHECK --> TEST["cargo test<br/>(411 tests)"]
+    CHECK --> TEST["cargo test<br/>(426 tests)"]
     TEST --> CLIPPY["cargo clippy<br/>(lint warnings)"]
     CLIPPY --> FMT["cargo fmt --check<br/>(formatting)"]
     FMT --> BUILD["cargo build --release<br/>(release binary)"]
@@ -1575,7 +1595,7 @@ graph LR
 | Job | Purpose | Fails on |
 |-----|---------|----------|
 | `check` | Verify compilation | Any compile error |
-| `test` | Run all 411 tests | Any test failure |
+| `test` | Run all 426 tests | Any test failure |
 | `clippy` | Lint for common mistakes | Any clippy warning |
 | `fmt` | Check code formatting | Any formatting diff |
 | `build-release` | Build optimized binary | Build failure |
