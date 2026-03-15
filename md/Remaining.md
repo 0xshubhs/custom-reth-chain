@@ -30,7 +30,7 @@
 
 ### Core Modules (src/)
 
-Modular structure: 47 Rust files across 13 subdirectories, ~16,200 total lines, 426 tests.
+Modular structure: 47 Rust files across 13 subdirectories, ~16,200 total lines, 424 tests.
 
 | Module | Directory | Files | Status |
 |--------|-----------|-------|--------|
@@ -95,7 +95,7 @@ Modular structure: 47 Rust files across 13 subdirectories, ~16,200 total lines, 
 - [x] EIP-1559 base fee (0.875 gwei initial; `--zero-gas` sets to 0 for fee-free operation)
 - [x] EIP-4844 blob support enabled
 - [x] Zero-gas mode (`--zero-gas`): base fee=0 + `disable_base_fee` in revm, gasPrice=0 accepted
-- [x] Basic unit tests in each module (**426 tests passing** as of 2026-03-16)
+- [x] Basic unit tests in each module (**424 tests passing** as of 2026-03-16)
 - [x] CI/CD: GitHub Actions (`.github/workflows/ci.yml`) with check, test, clippy, fmt, build-release
 - [x] Clique RPC namespace (`clique_*`): getSigners, getSignersAtHash, getSnapshot, propose, discard, status, proposals
 - [x] Admin RPC namespace (`admin_*`): nodeInfo, peers, addPeer, removePeer, health
@@ -141,7 +141,7 @@ Modular structure: 47 Rust files across 13 subdirectories, ~16,200 total lines, 
 
 ### P0-ALPHA - Fundamental Architecture Problems
 
-> **Progress update (2026-03-16):** ALL P0-ALPHA items FIXED + Phases 2-5, 7 complete. Production NodeBuilder with MDBX. PoaConsensus validates signatures using live on-chain signer list. PoaPayloadBuilder signs blocks (difficulty 1/2, epoch signers), reads gas limit from ChainConfig, refreshes signers from SignerRegistry at epoch. StateProviderStorageReader wired. Timelock contract at genesis. Bootnode CLI. Fork choice rule. Phase 2 performance: PoaEvmFactory (max-contract-size, calldata-gas), --block-time-ms (sub-second blocks), StateDiffBuilder, PhaseTimer metrics, block time budget warnings. Phase 7: Clique RPC (8 methods), Admin RPC (5 methods + health), encrypted keystore (EIP-2335), Prometheus metrics (19 counters), CI/CD, Docker multi-node, 12 new CLI flags. 426 tests pass. Requires rustc 1.93.1+.
+> **Progress update (2026-03-16):** ALL P0-ALPHA items FIXED + Phases 2-5, 7 complete. Production NodeBuilder with MDBX. PoaConsensus validates signatures using live on-chain signer list. PoaPayloadBuilder signs blocks (difficulty 1/2, epoch signers), reads gas limit from ChainConfig, refreshes signers from SignerRegistry at epoch. StateProviderStorageReader wired. Timelock contract at genesis. Bootnode CLI. Fork choice rule. Phase 2 performance: PoaEvmFactory (max-contract-size, calldata-gas), --block-time-ms (sub-second blocks), StateDiffBuilder, PhaseTimer metrics, block time budget warnings. Phase 7: Clique RPC (8 methods), Admin RPC (5 methods + health), encrypted keystore (EIP-2335), Prometheus metrics (19 counters), CI/CD, Docker multi-node, 12 new CLI flags. 424 tests pass. Requires rustc 1.93.1+.
 
 | # | Issue | Status | What the code does now | Resolution |
 |---|-------|--------|------------------------|---------------------------|
@@ -1587,7 +1587,7 @@ Phase 1 - Make It Connectable:                                           100% do
   [x] 2. `meowchain init` subcommand — DB initialization from genesis.json via --datadir
   [x] 3. External HTTP/WS RPC
   [x] 4. Chain ID unified
-  [x] 5. Tests passing (426 tests)
+  [x] 5. Tests passing (424 tests)
   [x] 6. Canonical genesis.json (dev + production regenerated 2026-02-20)
   [x] 7. meow_* RPC namespace (chainConfig, signers, nodeInfo)
 
@@ -1785,9 +1785,9 @@ ERC-4337 EntryPoint in genesis but no bundler service. No faucet. No SDK.
 ---
 
 *Last updated: 2026-03-16 | Meowchain Custom POA on Reth (reth 1.11.0, rustc 1.93.1+)*
-*426 tests passing | All finalized EIPs through Prague + Fusaka/Osaka*
+*424 tests passing | All finalized EIPs through Prague + Fusaka/Osaka*
 *ALL PHASES COMPLETE (0-7): foundation, connectable, performance, governance, multi-node, advanced perf, ecosystem, production infra*
-*46 Rust files, ~15,000 lines, 18 modules, 13 subdirectories, 31 CLI args*
+*47 Rust files, ~16,200 lines, 18 modules, 13 subdirectories, 34 CLI args*
 *Performance: 1s blocks (100ms stretch), 300M-1B gas, parallel EVM, calldata discount, hot state cache*
 *Governance: on-chain ChainConfig + SignerRegistry + Treasury + Timelock + Gnosis Safe multisig*
 *Infrastructure: 3 RPC namespaces, Prometheus metrics, encrypted keystore, CI/CD, Docker multi-node*

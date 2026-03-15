@@ -1,7 +1,7 @@
 # Meowchain Architecture
 
 > Comprehensive architecture documentation for the Meowchain POA blockchain built on Reth.
-> ~47 Rust source files | ~16,200 lines | 426 tests | Chain ID 9323310 | 34 CLI args
+> ~47 Rust source files | ~16,200 lines | 424 tests | Chain ID 9323310 | 34 CLI args
 
 ---
 
@@ -270,7 +270,7 @@ src/
     └── registry.rs           (640 lines)   MetricsRegistry (19 atomic counters, TCP HTTP Prometheus server, 16 tests)
 ```
 
-**Total: ~47 files, ~16,200 lines, 426 tests**
+**Total: ~47 files, ~16,200 lines, 424 tests**
 
 ---
 
@@ -1581,7 +1581,7 @@ GitHub Actions workflow (`.github/workflows/ci.yml`) runs on every push and pull
 ```mermaid
 graph LR
     PUSH["Push / PR"] --> CHECK["cargo check<br/>(compile errors)"]
-    CHECK --> TEST["cargo test<br/>(426 tests)"]
+    CHECK --> TEST["cargo test<br/>(424 tests)"]
     TEST --> CLIPPY["cargo clippy<br/>(lint warnings)"]
     CLIPPY --> FMT["cargo fmt --check<br/>(formatting)"]
     FMT --> BUILD["cargo build --release<br/>(release binary)"]
@@ -1595,7 +1595,7 @@ graph LR
 | Job | Purpose | Fails on |
 |-----|---------|----------|
 | `check` | Verify compilation | Any compile error |
-| `test` | Run all 426 tests | Any test failure |
+| `test` | Run all 424 tests | Any test failure |
 | `clippy` | Lint for common mistakes | Any clippy warning |
 | `fmt` | Check code formatting | Any formatting diff |
 | `build-release` | Build optimized binary | Build failure |

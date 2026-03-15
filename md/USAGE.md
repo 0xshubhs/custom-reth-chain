@@ -6,7 +6,7 @@ Custom POA blockchain on Reth. Chain ID **9323310**, all hardforks through Pragu
 
 ```
 custom-reth-chain-/
-├── src/                            # Rust source code (~15,000 lines, 46 files, 425 tests)
+├── src/                            # Rust source code (~16,200 lines, 47 files, 424 tests)
 │   ├── main.rs                     # Entry point, block monitoring
 │   ├── lib.rs                      # Library root (module declarations)
 │   ├── cli.rs                      # Cli struct (clap args)
@@ -850,7 +850,7 @@ rm -rf data/
 ### Running Tests
 
 ```bash
-# Run all 425 tests (with cargo update)
+# Run all 424 tests (with cargo update)
 just test
 
 # Run tests without cargo update (faster)
@@ -888,7 +888,7 @@ cargo test validate_header     # All header validation tests
 cargo test json_serialization  # All JSON serialization tests
 ```
 
-### Test Suite Overview (425 tests)
+### Test Suite Overview (424 tests)
 
 All tests run in ~0.4s. No external services, databases, or network access needed.
 
@@ -1183,4 +1183,4 @@ Tests the state diff builder for replica state streaming.
 
 **Async tests:** RPC tests use `#[tokio::test]` for async method testing. Keystore and signer tests use async for concurrent access verification.
 
-*Last updated: 2026-03-16 | Chain ID 9323310 | reth 1.11.0 | 425 tests passing | ~15,000 lines | 46 files*
+*Last updated: 2026-03-16 | Chain ID 9323310 | reth 1.11.0 | 424 tests passing | ~16,200 lines | 47 files*

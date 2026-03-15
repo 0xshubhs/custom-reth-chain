@@ -67,7 +67,7 @@ The `src/` directory uses a modular structure with **~47 Rust files** across **1
 | Shared | `src/{lib,constants,errors}.rs` | Module root + constants + re-exports | — |
 | Bytecodes | `src/bytecodes/` | Pre-compiled contract bytecodes (.bin/.hex, 13 contracts) | — |
 
-**Total: ~16,200 lines Rust across ~47 files, 426 tests passing (2026-03-16)**
+**Total: ~16,200 lines Rust across ~47 files, 424 tests passing (2026-03-16)**
 
 ### File-Level Breakdown
 
@@ -228,7 +228,7 @@ RuntimeBuilder::new(
 - [x] External HTTP (8545) + WS (8546) RPC on 0.0.0.0
 - [x] Chain ID 9323310 everywhere
 - [x] CLI: `--gas-limit`, `--eager-mining`, `--signer-key`, `--production`, `--no-dev`, `--port`, `--bootnodes`, `--disable-discovery`, `--mining`, `--max-contract-size`, `--cache-size`, `--calldata-gas`
-- [x] 426 tests passing
+- [x] 424 tests passing
 
 ### Phase 3 — Governance (100%)
 - [x] Gnosis Safe v1.3.0 in genesis: Singleton, Proxy Factory, Fallback Handler, MultiSend
@@ -292,7 +292,7 @@ RuntimeBuilder::new(
 - [x] Comprehensive architecture documentation (`md/Architecture.md`, updated)
 - [x] Zero compiler warnings, clean on rustc 1.93.1+
 - [x] CI/CD: GitHub Actions (check, test, clippy, fmt, build-release)
-- [x] 426 tests: consensus (59), onchain (56), genesis (33), clique RPC (28), statediff (28), chainspec (27), evm (54: 17 mod + 25 parallel + 12 bench), admin RPC (24), signer (21), keystore (20), cache (20), payload (16), metrics/registry (16), metrics (19), meow RPC (9), node (8), output (4)
+- [x] 424 tests: consensus (59), onchain (56), genesis (33), clique RPC (28), statediff (28), chainspec (27), evm (54: 17 mod + 25 parallel + 12 bench), admin RPC (24), signer (21), keystore (20), cache (20), payload (16), metrics/registry (16), metrics (19), meow RPC (9), node (8), output (4)
 
 ### Phase 2.12-13 — Calldata Gas + Parallel Foundation (100%)
 - [x] `CalldataDiscountInspector<I>` — wraps any `Inspector<CTX>`, applies discount once per tx via `initialize_interp` + `Gas::erase_cost`; discount = `(16 - cost) × non_zero_bytes`
@@ -432,7 +432,7 @@ just docker-multinode
 
 ## Development Notes
 
-- **426 tests**: `just test` (or `cargo test`) — unit + integration tests
+- **424 tests**: `just test` (or `cargo test`) — unit + integration tests
 - **Modular structure**: ~47 files across 13 subdirectories, 18 modules
 - **Architecture doc**: `md/Architecture.md` (1,500+ lines, 14+ Mermaid diagrams) covers every module
 - **3 RPC namespaces**: `meow_*` (chain info), `clique_*` (POA signer management), `admin_*` (node admin + health)
@@ -468,7 +468,7 @@ just docker-multinode
 
 See `md/Remaining.md` for full details. Key remaining phases:
 
-1. **Phase 0-1** — Foundation + Connectable: **COMPLETE** (426 tests, production NodeBuilder, MDBX)
+1. **Phase 0-1** — Foundation + Connectable: **COMPLETE** (424 tests, production NodeBuilder, MDBX)
 2. **Phase 3** — Governance: **COMPLETE** (Timelock, on-chain reads, live signer cache, StateProviderStorageReader)
 3. **Phase 4** — Multi-Node: **COMPLETE** (bootnodes CLI, fork choice, state sync validation, integration tests)
 4. **Phase 2** — Performance (items 10-18 done): 1s/500ms blocks, 300M/1B gas, calldata gas, zero-gas, ParallelSchedule, StateDiffBuilder, build timing; parallel EVM live integration **<-- NEXT**
@@ -478,4 +478,4 @@ See `md/Remaining.md` for full details. Key remaining phases:
 
 Target: **1-second blocks, 5K-10K TPS, full on-chain governance** (vs MegaETH's 10ms/100K TPS but single sequencer)
 
-*Last updated: 2026-03-16 | reth 1.11.0, rustc 1.93.1+, 426 tests, ~16,200 lines, ~47 files*
+*Last updated: 2026-03-16 | reth 1.11.0, rustc 1.93.1+, 424 tests, ~16,200 lines, ~47 files*

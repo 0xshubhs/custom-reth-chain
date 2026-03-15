@@ -1,7 +1,7 @@
 Where Meowchain stands today
 
 
- 1.  You have a solid foundation — signed POA blocks, 425 tests, governance contracts in genesis, ERC-4337, Gnosis Safe, all hardforks through Prague. That's
+ 1.  You have a solid foundation — signed POA blocks, 424 tests, governance contracts in genesis, ERC-4337, Gnosis Safe, all hardforks through Fusaka. That's
   more than most chains had at launch. But there's a massive gap between "it compiles" and "people want to build on it."
 
   ---
