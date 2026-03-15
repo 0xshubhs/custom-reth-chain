@@ -23,7 +23,6 @@ reth-db = { git = "https://github.com/paradigmxyz/reth", branch = "main" }
 reth-ethereum-payload-builder = { git = "https://github.com/paradigmxyz/reth", branch = "main" }
 reth-basic-payload-builder = { git = "https://github.com/paradigmxyz/reth", branch = "main" }
 reth-evm = { git = "https://github.com/paradigmxyz/reth", branch = "main" }
-reth-evm-ethereum = { git = "https://github.com/paradigmxyz/reth", branch = "main" }
 reth-transaction-pool = { git = "https://github.com/paradigmxyz/reth", branch = "main" }
 reth-ethereum-engine-primitives = { git = "https://github.com/paradigmxyz/reth", branch = "main" }
 reth-payload-builder-primitives = { git = "https://github.com/paradigmxyz/reth", branch = "main" }

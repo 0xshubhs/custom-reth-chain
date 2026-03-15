@@ -2751,7 +2751,6 @@ dependencies = [
  "reth-ethereum-forks",
  "reth-ethereum-payload-builder",
  "reth-evm",
- "reth-evm-ethereum",
  "reth-execution-types",
  "reth-network-peers",
  "reth-payload-builder-primitives",
