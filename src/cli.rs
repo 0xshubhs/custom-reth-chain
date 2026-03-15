@@ -117,6 +117,15 @@ pub struct Cli {
     #[arg(long, default_value = "4", value_parser = clap::value_parser!(u64).range(1..=16))]
     pub calldata_gas: u64,
 
+    /// Enable zero-gas mode: transactions cost no gas fees.
+    ///
+    /// Sets genesis base fee to 0, disables EIP-1559 base fee validation in the EVM,
+    /// and allows transactions with `gasPrice: 0` / `maxFeePerGas: 0`.
+    /// Gas is still tracked for execution limits (preventing infinite loops),
+    /// but users pay nothing. Common for private/consortium POA chains.
+    #[arg(long)]
+    pub zero_gas: bool,
+
     // ── Production-grade RPC & observability flags ────────────────────
     /// Enable Prometheus metrics endpoint.
     ///

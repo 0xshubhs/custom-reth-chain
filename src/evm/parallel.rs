@@ -5,10 +5,8 @@
 //!
 //! # Design overview
 //!
-//! Full parallel EVM execution (as in [grevm](https://github.com/Galxe/grevm)) requires
-//! a dependency graph built from per-transaction state-access records.  The pieces here
-//! form the foundation that a future grevm integration (or a hand-rolled parallel executor)
-//! will build on:
+//! Parallel EVM execution requires a dependency graph built from per-transaction
+//! state-access records.  The pieces here form the foundation for parallel execution:
 //!
 //! ```text
 //!   TxAccessRecord          — read/write sets recorded during EVM execution
@@ -18,21 +16,12 @@
 //!
 //! ## Current status
 //!
-//! grevm is not yet available as a crate on crates.io, so live parallel execution is
-//! out of scope for this release.  This module ships with:
+//! This module ships with:
 //!
 //! - All foundational types and logic with full test coverage.
 //! - A `ParallelSchedule` that produces correct batches for sequential execution with
 //!   the same semantics as true parallel execution (i.e. no visible difference in output).
-//! - A `ParallelExecutor` stub that falls back to sequential execution and is ready to
-//!   be upgraded to grevm once the crate becomes available.
-//!
-//! ## Enabling true parallelism
-//!
-//! When grevm ships:
-//! 1. Add `grevm = { version = "...", features = ["reth"] }` to `Cargo.toml`.
-//! 2. Replace `ParallelExecutor::execute_sequential` with the grevm executor.
-//! 3. The `TxAccessRecord` / `ConflictDetector` / `ParallelSchedule` types remain unchanged.
+//! - A `ParallelExecutor` stub that falls back to sequential execution.
 
 use alloy_primitives::{Address, B256};
 use std::collections::{HashMap, HashSet};
@@ -204,8 +193,8 @@ impl ParallelSchedule {
 /// EVM executor stub with parallel scheduling.
 ///
 /// Currently executes all transactions sequentially in the correct order while
-/// building the parallel schedule.  When grevm becomes available, the inner
-/// execution loop can be replaced with grevm's parallel executor, while keeping
+/// building the parallel schedule.  The inner execution loop can be replaced
+/// with a true parallel executor, while keeping
 /// the same interface.
 ///
 /// # Usage

@@ -71,6 +71,8 @@ pub struct PoaNode {
     /// Gas cost per non-zero calldata byte, 1–16 (Phase 2.12).
     /// `16` = Ethereum mainnet default. `4` = POA default (cheap calldata).
     calldata_gas_per_byte: u64,
+    /// Zero-gas mode: disable base fee validation, accept gasPrice=0 txs.
+    zero_gas: bool,
 }
 
 impl PoaNode {
@@ -83,6 +85,7 @@ impl PoaNode {
             cache_size: 1024,
             max_contract_size: None,
             calldata_gas_per_byte: 4, // POA default: cheap calldata
+            zero_gas: false,
         }
     }
 
@@ -118,6 +121,12 @@ impl PoaNode {
     /// Clamped to `[1, 16]`. `16` = Ethereum mainnet. `4` = POA default.
     pub fn with_calldata_gas(mut self, cost: u64) -> Self {
         self.calldata_gas_per_byte = cost.clamp(1, 16);
+        self
+    }
+
+    /// Enable zero-gas mode: no base fee, accept gasPrice=0 transactions.
+    pub fn with_zero_gas(mut self, zero_gas: bool) -> Self {
+        self.zero_gas = zero_gas;
         self
     }
 }
@@ -161,6 +170,7 @@ where
             .executor(PoaExecutorBuilder::new(
                 self.max_contract_size,
                 self.calldata_gas_per_byte,
+                self.zero_gas,
             ))
             .payload(BasicPayloadServiceBuilder::new(
                 PoaPayloadBuilderBuilder::new(

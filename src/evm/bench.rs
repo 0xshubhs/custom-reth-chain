@@ -1,9 +1,9 @@
 //! EVM benchmark-style tests for Meowchain.
 //!
-//! Measures EVM execution performance across various workload categories and compares
-//! against published GEVM benchmarks (GEVM vs geth). These are `#[test]` functions
-//! that use `std::time::Instant` for timing rather than the `criterion` harness, so
-//! they run alongside the rest of the test suite via `cargo test`.
+//! Measures EVM execution performance across various workload categories.
+//! These are `#[test]` functions that use `std::time::Instant` for timing
+//! rather than the `criterion` harness, so they run alongside the rest of
+//! the test suite via `cargo test`.
 //!
 //! # Categories
 //!
@@ -19,7 +19,6 @@
 //! | `test_evm_max_contract_size` | Configurable contract size limit |
 //! | `test_parallel_schedule_throughput` | ParallelSchedule batch scheduling perf |
 //! | `test_conflict_detection_performance` | ConflictDetector mixed access patterns |
-//! | `test_evm_vs_gevm_comparison` | Print comparison table |
 
 #[cfg(test)]
 mod tests {
@@ -450,7 +449,7 @@ mod tests {
     #[test]
     fn test_evm_simple_transfer() {
         // Measure the time to create an EVM and execute a simple value transfer.
-        // GEVM benchmark reference: ~0.5 us per simple transfer (in-memory, no disk).
+        // Reference: ~0.5-5 us per simple transfer (in-memory, no disk).
         let factory = PoaEvmFactory::default();
         let db = BenchDb::new();
         let env = bench_env();
@@ -476,7 +475,7 @@ mod tests {
         println!("  Per transfer: {per_tx_us:.2} us");
         println!("  Throughput:   {:.0} tx/s", 1_000_000.0 / per_tx_us);
         println!("  ---");
-        println!("  GEVM reference:  ~0.5 us/transfer (optimistic, in-memory)");
+        println!("  Reference:  ~0.5-5 us/transfer (in-memory)");
         println!("  geth reference:  ~2-5 us/transfer");
         println!();
 
@@ -494,7 +493,7 @@ mod tests {
     #[test]
     fn test_evm_contract_creation() {
         // Deploy a small contract (64 bytes runtime code) repeatedly.
-        // GEVM reference: contract deployment ~10-50 us depending on size.
+        // Reference: contract deployment ~10-50 us depending on size.
         let factory = PoaEvmFactory::default();
         let db = BenchDb::new();
         let env = bench_env();
@@ -526,7 +525,7 @@ mod tests {
         println!("  Per creation:  {per_tx_us:.2} us");
         println!("  Throughput:    {:.0} creates/s", 1_000_000.0 / per_tx_us);
         println!("  ---");
-        println!("  GEVM reference:  ~10-50 us/create (small contracts)");
+        println!("  Reference:  ~10-50 us/create (small contracts)");
         println!();
 
         assert!(
@@ -540,7 +539,7 @@ mod tests {
     #[test]
     fn test_evm_storage_operations() {
         // Execute SSTORE+SLOAD loops inside a contract.
-        // GEVM Snailtracer benchmark: ~800 us for complex storage-heavy workloads.
+        // Reference: ~800 us for complex storage-heavy workloads.
         let factory = PoaEvmFactory::default();
         let contract_addr = Address::from([0xBB; 20]);
 
@@ -572,7 +571,7 @@ mod tests {
             per_run_us / ops_per_run as f64
         );
         println!("  ---");
-        println!("  GEVM Snailtracer ref: ~800 us (complex storage + compute)");
+        println!("  Snailtracer ref: ~800 us (complex storage + compute)");
         println!("  SSTORE cold (EIP-2929): 22,100 gas; SLOAD cold: 2,100 gas");
         println!();
 
@@ -587,7 +586,7 @@ mod tests {
     #[test]
     fn test_evm_arithmetic_heavy() {
         // Pure arithmetic: ADD + MUL + DIV loop.
-        // GEVM reference: arithmetic opcodes ~0.01-0.05 us per opcode.
+        // Reference: arithmetic opcodes ~0.01-0.05 us per opcode.
         let factory = PoaEvmFactory::default();
         let contract_addr = Address::from([0xBB; 20]);
 
@@ -620,7 +619,7 @@ mod tests {
             per_run_us / arith_ops_per_run as f64
         );
         println!("  ---");
-        println!("  GEVM reference:  ~0.01-0.05 us per arithmetic opcode");
+        println!("  Reference:  ~0.01-0.05 us per arithmetic opcode");
         println!("  geth reference:  ~0.05-0.10 us per arithmetic opcode");
         println!();
 
@@ -635,7 +634,7 @@ mod tests {
     #[test]
     fn test_evm_memory_operations() {
         // MSTORE + MLOAD loop, expanding memory.
-        // GEVM reference: memory ops ~0.02-0.1 us per op (excluding expansion gas).
+        // Reference: memory ops ~0.02-0.1 us per op (excluding expansion gas).
         let factory = PoaEvmFactory::default();
         let contract_addr = Address::from([0xBB; 20]);
 
@@ -667,7 +666,7 @@ mod tests {
             per_run_us / mem_ops_per_run as f64
         );
         println!("  ---");
-        println!("  GEVM reference:  ~0.02-0.1 us per MLOAD/MSTORE");
+        println!("  Reference:  ~0.02-0.1 us per MLOAD/MSTORE");
         println!(
             "  Memory expansion:  {} bytes peak ({}x32)",
             iterations as u64 * 32,
@@ -686,7 +685,7 @@ mod tests {
     #[test]
     fn test_evm_keccak_heavy() {
         // SHA3/KECCAK256 loop.
-        // GEVM reference: keccak ~0.3-1.0 us per hash (32 bytes).
+        // Reference: keccak ~0.3-1.0 us per hash (32 bytes).
         let factory = PoaEvmFactory::default();
         let contract_addr = Address::from([0xBB; 20]);
 
@@ -714,7 +713,7 @@ mod tests {
         println!("  Per run:        {per_run_us:.2} us");
         println!("  Per keccak:     {:.4} us", per_run_us / iterations as f64);
         println!("  ---");
-        println!("  GEVM reference:  ~0.3-1.0 us per KECCAK256 (32 bytes)");
+        println!("  Reference:  ~0.3-1.0 us per KECCAK256 (32 bytes)");
         println!("  geth reference:  ~1.0-3.0 us per KECCAK256 (32 bytes)");
         println!();
 
@@ -811,7 +810,7 @@ mod tests {
         use alloy_evm::revm::primitives::eip170::MAX_CODE_SIZE;
 
         // -- Ethereum default (no override) --
-        let factory_default = PoaEvmFactory::new(None, 16);
+        let factory_default = PoaEvmFactory::new(None, 16, false);
         let env_default = factory_default.patch_env(EvmEnv::default());
         assert!(
             env_default.cfg_env.limit_contract_code_size.is_none(),
@@ -821,7 +820,7 @@ mod tests {
 
         // -- 128 KB override --
         let size_128k: usize = 128 * 1024;
-        let factory_128k = PoaEvmFactory::new(Some(size_128k), 16);
+        let factory_128k = PoaEvmFactory::new(Some(size_128k), 16, false);
         let env_128k = factory_128k.patch_env(EvmEnv::default());
         assert_eq!(env_128k.cfg_env.limit_contract_code_size, Some(size_128k));
         assert_eq!(
@@ -832,7 +831,7 @@ mod tests {
 
         // -- 512 KB override (MegaETH-inspired target) --
         let size_512k: usize = 512 * 1024;
-        let factory_512k = PoaEvmFactory::new(Some(size_512k), 4);
+        let factory_512k = PoaEvmFactory::new(Some(size_512k), 4, false);
         let env_512k = factory_512k.patch_env(EvmEnv::default());
         assert_eq!(env_512k.cfg_env.limit_contract_code_size, Some(size_512k));
         assert_eq!(
@@ -852,7 +851,7 @@ mod tests {
         println!();
 
         for (label, size) in &sizes {
-            let factory = PoaEvmFactory::new(Some(*size), 4);
+            let factory = PoaEvmFactory::new(Some(*size), 4, false);
             let db = BenchDb::new();
             let env = bench_env();
 
@@ -876,7 +875,7 @@ mod tests {
         }
 
         println!();
-        println!("  Note: GEVM does not change contract size limits.");
+        println!("  Note: Ethereum does not change contract size limits.");
         println!("  MegaETH target: 512 KB max contract size.");
         println!();
     }
@@ -1088,224 +1087,4 @@ mod tests {
         );
     }
 
-    // -- 11. Comparison table ---------------------------------------------
-
-    #[test]
-    fn test_evm_vs_gevm_comparison() {
-        // Run a representative subset of benchmarks and print a formatted
-        // comparison table against published GEVM and geth numbers.
-        //
-        // GEVM reference numbers are from:
-        //   https://github.com/Galxe/grevm (benchmark tables in README)
-        // geth reference numbers are from GEVM's comparative benchmarks.
-        //
-        // Our numbers are revm-based (single-threaded), so we expect to be
-        // comparable to or faster than geth, but slower than GEVM (which uses
-        // parallel execution via grevm).
-
-        let factory = PoaEvmFactory::default();
-        let contract_addr = Address::from([0xBB; 20]);
-        let db_base = BenchDb::new();
-
-        // -- Benchmark: Simple transfer --
-        let transfer_iters = 500u32;
-        let start = Instant::now();
-        for _ in 0..transfer_iters {
-            let mut evm = factory.create_evm(db_base.clone(), bench_env());
-            let tx = simple_transfer_tx(Address::from([0xCC; 20]), U256::from(1u64));
-            let _ = evm.transact(tx);
-        }
-        let transfer_us = start.elapsed().as_micros() as f64 / transfer_iters as f64;
-
-        // -- Benchmark: Arithmetic (1000 iter loop) --
-        let arith_bytecode = arithmetic_loop_bytecode(1_000);
-        let db_arith = db_base.clone().with_code(Bytecode::new_raw(arith_bytecode));
-        let arith_runs = 200u32;
-        let start = Instant::now();
-        for _ in 0..arith_runs {
-            let mut evm = factory.create_evm(db_arith.clone(), bench_env());
-            let tx = contract_call_tx(contract_addr, Bytes::new(), 5_000_000);
-            let _ = evm.transact(tx);
-        }
-        let arith_us = start.elapsed().as_micros() as f64 / arith_runs as f64;
-
-        // -- Benchmark: Memory (500 iter loop) --
-        let mem_bytecode = memory_loop_bytecode(500);
-        let db_mem = db_base.clone().with_code(Bytecode::new_raw(mem_bytecode));
-        let mem_runs = 200u32;
-        let start = Instant::now();
-        for _ in 0..mem_runs {
-            let mut evm = factory.create_evm(db_mem.clone(), bench_env());
-            let tx = contract_call_tx(contract_addr, Bytes::new(), 10_000_000);
-            let _ = evm.transact(tx);
-        }
-        let mem_us = start.elapsed().as_micros() as f64 / mem_runs as f64;
-
-        // -- Benchmark: Keccak (500 iter loop) --
-        let keccak_bytecode = keccak_loop_bytecode(500);
-        let db_keccak = db_base
-            .clone()
-            .with_code(Bytecode::new_raw(keccak_bytecode));
-        let keccak_runs = 200u32;
-        let start = Instant::now();
-        for _ in 0..keccak_runs {
-            let mut evm = factory.create_evm(db_keccak.clone(), bench_env());
-            let tx = contract_call_tx(contract_addr, Bytes::new(), 10_000_000);
-            let _ = evm.transact(tx);
-        }
-        let keccak_us = start.elapsed().as_micros() as f64 / keccak_runs as f64;
-
-        // -- Benchmark: Storage (200 iter SSTORE+SLOAD) --
-        let storage_bytecode = storage_loop_bytecode(200);
-        let db_storage = db_base
-            .clone()
-            .with_code(Bytecode::new_raw(storage_bytecode));
-        let storage_runs = 100u32;
-        let start = Instant::now();
-        for _ in 0..storage_runs {
-            let mut evm = factory.create_evm(db_storage.clone(), bench_env());
-            let tx = contract_call_tx(contract_addr, Bytes::new(), 10_000_000);
-            let _ = evm.transact(tx);
-        }
-        let storage_us = start.elapsed().as_micros() as f64 / storage_runs as f64;
-
-        // -- Benchmark: Parallel scheduling (1000 txs) --
-        let sched_records: Vec<TxAccessRecord> = (0..1_000usize)
-            .map(|i| {
-                let mut r = TxAccessRecord::default();
-                if i % 5 == 0 {
-                    r.add_write(addr(1), slot(0));
-                } else {
-                    r.add_read(addr((i % 200) as u8), slot((i % 50) as u8));
-                }
-                r
-            })
-            .collect();
-
-        let start = Instant::now();
-        let schedule = ParallelSchedule::build(&sched_records);
-        let sched_us = start.elapsed().as_micros() as f64;
-
-        // -- Print comparison table --
-        print_benchmark_comparison(
-            transfer_us,
-            arith_us,
-            mem_us,
-            keccak_us,
-            storage_us,
-            sched_us,
-            &schedule,
-        );
-
-        // Sanity: all benchmarks should have produced positive timings
-        assert!(transfer_us > 0.0);
-        assert!(arith_us > 0.0);
-        assert!(mem_us > 0.0);
-        assert!(keccak_us > 0.0);
-        assert!(storage_us > 0.0);
-    }
-
-    // =====================================================================
-    //  Comparison table printer
-    // =====================================================================
-
-    /// Print a formatted comparison table: Meowchain (revm) vs GEVM vs geth.
-    ///
-    /// GEVM and geth numbers are from published benchmarks (Galxe/grevm README).
-    /// Our numbers are measured live in this test run.
-    ///
-    /// Note: Direct comparison is approximate because:
-    /// 1. GEVM benchmarks use different hardware and block sizes.
-    /// 2. Our tests use in-memory BenchDb, not a real database.
-    /// 3. GEVM benefits from parallel execution (multi-threaded).
-    fn print_benchmark_comparison(
-        transfer_us: f64,
-        arith_us: f64,
-        mem_us: f64,
-        keccak_us: f64,
-        storage_us: f64,
-        schedule_us: f64,
-        schedule: &ParallelSchedule,
-    ) {
-        println!();
-        println!(
-            "===================================================================================="
-        );
-        println!("  EVM Performance Comparison: Meowchain (revm) vs GEVM vs geth");
-        println!(
-            "===================================================================================="
-        );
-        println!();
-        println!(
-            "  {:<28} {:>14} {:>14} {:>14}",
-            "Benchmark", "Meowchain", "GEVM*", "geth*"
-        );
-        println!(
-            "  {:<28} {:>14} {:>14} {:>14}",
-            "", "(revm, 1T)", "(revm, nT)", "(go, 1T)"
-        );
-        println!("  {:-<72}", "");
-        println!(
-            "  {:<28} {:>12.1} us {:>12} {:>12}",
-            "Simple ETH transfer", transfer_us, "~0.5 us", "~2-5 us"
-        );
-        println!(
-            "  {:<28} {:>12.1} us {:>12} {:>12}",
-            "Arithmetic (1K iters)", arith_us, "~5-20 us", "~20-80 us"
-        );
-        println!(
-            "  {:<28} {:>12.1} us {:>12} {:>12}",
-            "Memory ops (500 iters)", mem_us, "~10-30 us", "~30-100 us"
-        );
-        println!(
-            "  {:<28} {:>12.1} us {:>12} {:>12}",
-            "KECCAK256 (500 hashes)", keccak_us, "~50-150 us", "~100-500 us"
-        );
-        println!(
-            "  {:<28} {:>12.1} us {:>12} {:>12}",
-            "Storage (200 SSTORE+SLOAD)", storage_us, "~100-400 us", "~200-800 us"
-        );
-        println!("  {:-<72}", "");
-        println!(
-            "  {:<28} {:>12.1} us {:>12} {:>12}",
-            "Parallel sched (1K txs)", schedule_us, "built-in", "N/A"
-        );
-        println!(
-            "  {:<28} {:>12} {:>12} {:>12}",
-            "  -> batches",
-            format!("{}", schedule.batches.len()),
-            "auto",
-            "N/A"
-        );
-        println!(
-            "  {:<28} {:>12} {:>12} {:>12}",
-            "  -> avg batch size",
-            format!("{:.1}", schedule.avg_batch_size()),
-            "dynamic",
-            "N/A"
-        );
-        println!("  {:-<72}", "");
-        println!();
-        println!("  * GEVM/geth numbers are approximate ranges from published benchmarks.");
-        println!("    GEVM uses parallel execution (grevm) across multiple threads (nT).");
-        println!("    Meowchain currently runs single-threaded (1T) via revm.");
-        println!("    Direct comparison is illustrative, not apples-to-apples.");
-        println!();
-        println!("  Meowchain advantages over geth:");
-        println!("    - revm (Rust) vs go-ethereum (Go): ~2-5x faster per opcode");
-        println!("    - Calldata gas discount (4 vs 16 gas/byte): 75% calldata cost reduction");
-        println!("    - Configurable contract size limit (up to 512 KB vs 24 KB)");
-        println!("    - Parallel scheduling foundation ready for grevm integration");
-        println!();
-        println!("  Meowchain roadmap to match GEVM:");
-        println!("    - [ ] grevm integration for parallel EVM execution");
-        println!("    - [ ] JIT compilation via revmc");
-        println!("    - [ ] Async trie hashing");
-        println!("    - [ ] State-diff streaming to replicas");
-        println!();
-        println!(
-            "===================================================================================="
-        );
-        println!();
-    }
 }

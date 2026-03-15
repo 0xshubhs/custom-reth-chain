@@ -20,12 +20,9 @@
 13. [Admin Privileges & Multisig Governance](#13-admin-privileges--multisig-governance)
 14. [Dynamic Chain Parameters](#14-dynamic-chain-parameters)
 15. [Meowchain vs MegaETH vs Ethereum Comparison](#15-meowchain-vs-megaeth-vs-ethereum-comparison)
-16. [GEVM Comparison & EVM Superiority](#16-gevm-comparison--evm-superiority)
-17. [Meowchain vs GEVM: Honest Ranking](#17-meowchain-vs-gevm-honest-ranking)
-18. [Critical Gaps to "Fastest Open-Source Chain"](#18-critical-gaps-to-fastest-open-source-chain)
-19. [Roadmap to "Fastest Open-Source Chain"](#19-roadmap-to-fastest-open-source-chain)
-20. [Lessons to Steal from GEVM](#20-lessons-to-steal-from-gevm)
-21. [Meowchain vs MegaETH vs Ethereum Positioning](#21-meowchain-vs-megaeth-vs-ethereum-positioning)
+16. [Critical Gaps to "Fastest Open-Source Chain"](#16-critical-gaps-to-fastest-open-source-chain)
+17. [Roadmap to "Fastest Open-Source Chain"](#17-roadmap-to-fastest-open-source-chain)
+18. [Meowchain vs MegaETH vs Ethereum Positioning](#18-meowchain-vs-megaeth-vs-ethereum-positioning)
 
 ---
 
@@ -1570,64 +1567,6 @@ The sweet spot:
 
 ---
 
-## 16. GEVM Comparison & EVM Superiority
-
-### Why Meowchain's revm-based EVM is Superior to GEVM
-
-Meowchain uses **revm** (Rust EVM) as its execution engine, inherited from Reth. revm is the fastest production EVM implementation, written in Rust with zero-copy optimizations, and powers the entire Reth node. GEVM (Go EVM, from go-ethereum) is go-ethereum's interpreter library -- a fundamentally different tool at a different abstraction level.
-
-**Key insight:** GEVM is an *EVM interpreter library*, not a blockchain node. Comparing GEVM to Meowchain is comparing a *single component* to a *complete system*. Meowchain includes consensus, networking, state management, RPC, governance, and parallel execution scheduling -- none of which GEVM provides.
-
-### Performance Comparison
-
-| Metric | revm (Meowchain) | GEVM (go-ethereum) | geth (full node) |
-|--------|-------------------|---------------------|-------------------|
-| **Language** | Rust | Go | Go |
-| **EVM execution speed** | ~2-3x faster than geth | ~1x (same as geth) | 1x baseline |
-| **Memory safety** | Compile-time (Rust borrow checker) | Runtime (Go GC) | Runtime (Go GC) |
-| **Memory usage** | Lower (no GC overhead) | Higher (GC pauses) | Higher (GC pauses) |
-| **JIT/AOT compilation** | revmc (Reth infra) | None | None |
-| **Parallel execution** | ParallelSchedule (DAG-based) | None | None |
-| **State trie** | MDBX (memory-mapped) | LevelDB/PebbleDB | LevelDB/PebbleDB |
-| **Calldata optimization** | CalldataDiscountInspector (4 gas/byte) | None (16 gas/byte fixed) | None (16 gas/byte fixed) |
-| **Max contract size** | Configurable (--max-contract-size) | Fixed 24KB (EIP-170) | Fixed 24KB (EIP-170) |
-
-### Feature Comparison: Meowchain Full Node vs GEVM Library
-
-| Feature | Meowchain (revm + Reth) | GEVM (library only) |
-|---------|--------------------------|----------------------|
-| **EVM execution** | Yes (revm) | Yes (Go EVM) |
-| **Consensus** | PoaConsensus (POA with governance) | **NO** -- not a consensus engine |
-| **Networking (P2P)** | Yes (devp2p, bootnodes, discovery) | **NO** -- not a network node |
-| **Block production** | Yes (PoaPayloadBuilder, signing) | **NO** -- cannot produce blocks |
-| **State storage** | Yes (MDBX, state trie) | **NO** -- no persistence layer |
-| **JSON-RPC API** | Yes (eth, meow, clique, admin) | **NO** -- no RPC server |
-| **Transaction pool** | Yes (inherited from Reth) | **NO** -- no mempool |
-| **Parallel execution** | ParallelSchedule + ConflictDetector | **NO** -- sequential only |
-| **On-chain governance** | ChainConfig, SignerRegistry, Treasury | **NO** -- no governance |
-| **Hardfork support** | Frontier through Prague + Osaka | Depends on geth version |
-| **Osaka EIPs** | EIP-7823, 7825, 7883, 7939, 7951 | Depends on geth version |
-| **Metrics & monitoring** | Prometheus (19 counters) | **NO** -- no metrics |
-| **Encrypted keystore** | EIP-2335 (PBKDF2 + AES-128-CTR) | **NO** -- no key management |
-
-### What GEVM Does NOT Have
-
-1. **No parallel execution** -- GEVM executes transactions sequentially. Meowchain has `ParallelSchedule` with DAG-based batch scheduling, `ConflictDetector` (WAW/WAR/RAW hazard detection), and `TxAccessRecord` per-tx access tracking, ready for grevm integration.
-
-2. **No consensus engine** -- GEVM is an interpreter. It cannot validate blocks, check signatures, enforce signer rotation, or implement fork choice rules. Meowchain's `PoaConsensus` does all of this with 59 tests.
-
-3. **No networking** -- GEVM cannot connect to peers, sync state, or propagate transactions. Meowchain inherits Reth's full devp2p stack with configurable bootnodes and discovery.
-
-4. **No block production** -- GEVM cannot build blocks, sign them, or manage the payload pipeline. Meowchain's `PoaPayloadBuilder` wraps Ethereum's payload builder with POA signing, on-chain gas limit reads, and epoch-based signer refresh.
-
-5. **No state management** -- GEVM has no database, no state trie, no pruning, no archive mode. Meowchain uses MDBX with `HotStateCache` (LRU) and `StateDiff` streaming.
-
-6. **No governance** -- GEVM has no concept of on-chain parameter changes, signer management, or treasury. Meowchain has full Gnosis Safe multisig governance with ChainConfig, SignerRegistry, Treasury, and Timelock contracts.
-
-> For detailed technical analysis, see [md/GEVM-Comparison.md](GEVM-Comparison.md) and [md/EVM-Design.md](EVM-Design.md).
-
----
-
 ## Priority Execution Order (Updated 2026-02-24)
 
 ```
@@ -1719,54 +1658,19 @@ Phase 6 - Production & Ecosystem:                                        100% do
 
 ---
 
-## 17. Meowchain vs GEVM: Honest Ranking
-
-### They're Different Layers — But Here's How They Stack
-
-| Dimension | Meowchain (Reth/Rust) | GEVM (Go) | Winner |
-|---|---|---|---|
-| **Raw EVM speed** | revm (~29ms Snailtracer) | ~31.5ms Snailtracer | **Meowchain** (~8-10% faster) |
-| **vs geth** | ~2.1x faster | ~2.0x faster | Tie |
-| **EIP/fork coverage** | Frontier → Prague | Frontier → **Osaka + Amsterdam** | **GEVM** |
-| **Spec test coverage** | ~411 custom + Reth suite | **47,930 explicit** | **GEVM** (much more visible) |
-| **Memory management** | Zero-cost Rust ownership | sync.Pool + arenas (fights GC) | **Meowchain** |
-| **Gas accounting tricks** | Standard revm | Two-mode accumulate/flush | **GEVM** (clever optimization) |
-| **Opcode dispatch** | LLVM-optimized fn pointers | Code-generated switch + 40 inlined opcodes | Tie (different strengths) |
-| **Object lifecycle** | No GC, no pooling needed | Aggressive pooling (Evm, Stack, Memory, Bytecode) | **Meowchain** |
-| **Consensus** | Full POA (signatures, timing, fork choice) | None | **Meowchain** |
-| **Block production** | Payload builder + sealer + epoch | None | **Meowchain** |
-| **Networking** | devp2p, bootnodes, discovery | None | **Meowchain** |
-| **RPC** | 3 custom + eth/web3/net/debug/txpool | None | **Meowchain** |
-| **Governance** | On-chain (ChainConfig, SignerRegistry, Gnosis Safe) | None | **Meowchain** |
-| **Production infra** | Prometheus, keystore, Docker, CI/CD | Makefile only | **Meowchain** |
-| **Parallel EVM** | Foundation (ParallelSchedule, ConflictDetector) — stub | None | **Meowchain** (but not live) |
-
-### Overall Score
-
-| Category | Meowchain | GEVM |
-|---|---|---|
-| **Full blockchain node** | **9/10** | 0/10 (not a node) |
-| **EVM execution engine** | **8.5/10** (revm) | **8/10** (within 10% of revm) |
-| **Production readiness** | **8/10** | 3/10 (library only) |
-| **Innovation/optimization** | 7/10 | **9/10** (brilliant Go tricks) |
-| **Spec compliance proof** | 7/10 (inherited from Reth) | **10/10** (47,930 explicit tests) |
-
----
-
-## 18. Critical Gaps to "Fastest Open-Source Chain"
+## 16. Critical Gaps to "Fastest Open-Source Chain"
 
 ### Gap 1: Parallel EVM is Still a Stub
 
 `ParallelSchedule` + `ConflictDetector` are correctly designed but **execute sequentially**. This is the single biggest throughput bottleneck.
 
 **What to do:**
-- **Option A:** Integrate [grevm](https://github.com/Galxe/grevm) once it's on crates.io — it's the natural fit since it's Rust/revm-native
-- **Option B:** Build a parallel executor using `rayon` thread pool + existing `ParallelSchedule` batches. Each batch runs concurrently, batches run in order. Achievable *now* without waiting for grevm.
+- Build a parallel executor using `rayon` thread pool + existing `ParallelSchedule` batches. Each batch runs concurrently, batches run in order.
 - **Impact:** 3-5x throughput gain on typical blocks (avg batch size > 1)
 
 ### Gap 2: No JIT/AOT Compilation (revmc)
 
-GEVM doesn't have this either, but [revmc](https://github.com/paradigmxyz/revmc) (revm JIT compiler) can compile hot contracts to native machine code. Single biggest per-tx speedup available.
+[revmc](https://github.com/paradigmxyz/revmc) (revm JIT compiler) can compile hot contracts to native machine code. Single biggest per-tx speedup available.
 
 **What to do:**
 - Add `revmc` as an optional dependency
@@ -1775,7 +1679,7 @@ GEVM doesn't have this either, but [revmc](https://github.com/paradigmxyz/revmc)
 
 ### Gap 3: Osaka/Amsterdam EIPs Missing
 
-GEVM already supports EIP-7823, 7825, 7883, 7907, 7939, 7951, and P256VERIFY. Meowchain does not yet.
+EIP-7823, 7825, 7883, 7907, 7939, 7951, and P256VERIFY may need activation.
 
 **What to do:**
 - Activate Osaka hardfork at genesis (when reth/revm adds it — likely imminent)
@@ -1784,12 +1688,12 @@ GEVM already supports EIP-7823, 7825, 7883, 7907, 7939, 7951, and P256VERIFY. Me
 
 ### Gap 4: No Visible Benchmark Suite
 
-GEVM publishes [evm-bench](https://github.com/pashakondratyev/evm-bench) numbers. `src/evm/bench.rs` uses `std::time::Instant` in test functions — not proper benchmarks.
+`src/evm/bench.rs` uses `std::time::Instant` in test functions — not proper benchmarks.
 
 **What to do:**
 - Add `criterion` benchmarks in `benches/` targeting the same workloads (Snailtracer, ERC-20, TenThousandHashes)
 - Publish numbers in README
-- Run against geth and GEVM to prove revm's superiority with hard data
+- Run against geth to prove revm's superiority with hard data
 - **Impact:** Credibility for open-source adoption
 
 ### Gap 5: No Async Trie Hashing
@@ -1831,7 +1735,7 @@ ERC-4337 EntryPoint in genesis but no bundler service. No faucet. No SDK.
 
 ---
 
-## 19. Roadmap to "Fastest Open-Source Chain"
+## 17. Roadmap to "Fastest Open-Source Chain"
 
 ### Phase A — Immediate (Get to 10K TPS)
 
@@ -1862,22 +1766,7 @@ ERC-4337 EntryPoint in genesis but no bundler service. No faucet. No SDK.
 
 ---
 
-## 20. Lessons to Steal from GEVM
-
-GEVM is brilliant Go engineering. These techniques can be adapted for Meowchain:
-
-| GEVM Technique | Adaptation for Meowchain |
-|---|---|
-| **Two-mode gas accounting** (accumulate/flush) | Implement in a custom revm Inspector to skip gas branches on static opcodes |
-| **Jump table caching across transactions** | Add a block-level bytecode analysis cache (revm caches per-tx, extend to block) |
-| **Published benchmarks** (evm-bench) | Criterion suite + README numbers — the biggest visibility gap |
-| **Code-generated dispatch** (single source of truth) | Not needed (revm's LLVM dispatch is faster), but the dual-path tracing idea is applicable |
-| **Arena allocators for accounts/slots** | Explore bump allocators for per-block account state (avoid individual allocs) |
-| **Hash-based bytecode reuse** | Cache `Bytecode` objects by code hash across an entire block's execution |
-
----
-
-## 21. Meowchain vs MegaETH vs Ethereum Positioning
+## 18. Meowchain vs MegaETH vs Ethereum Positioning
 
 | Dimension | Meowchain (current) | Meowchain (target) | MegaETH | Ethereum Mainnet |
 |---|---|---|---|---|
@@ -1890,7 +1779,7 @@ GEVM is brilliant Go engineering. These techniques can be adapted for Meowchain:
 | **Open source** | Yes | Yes | Partial | Yes |
 | **Your edge** | Decentralization + governance + open source | Speed + decentralization | Raw speed | Network effects |
 
-**Bottom line:** The fastest path to "best open-source fastest chain" is **parallel EVM (rayon) + revmc JIT + async trie hashing + published benchmarks**. Those four things would put Meowchain in a league that no other open-source chain occupies today.
+**Bottom line:** The fastest path forward is **parallel EVM (rayon) + revmc JIT + async trie hashing + published benchmarks**.
 
 ---
 
@@ -1901,4 +1790,4 @@ GEVM is brilliant Go engineering. These techniques can be adapted for Meowchain:
 *Performance: 1s blocks (100ms stretch), 300M-1B gas, parallel EVM, calldata discount, hot state cache*
 *Governance: on-chain ChainConfig + SignerRegistry + Treasury + Timelock + Gnosis Safe multisig*
 *Infrastructure: 3 RPC namespaces, Prometheus metrics, encrypted keystore, CI/CD, Docker multi-node*
-*Next: Parallel EVM (rayon) + revmc JIT + async trie hashing + criterion benchmarks → 10-50K TPS*
+*Next: Parallel EVM (rayon) + revmc JIT + async trie hashing + criterion benchmarks + zero-gas mode → 10-50K TPS*

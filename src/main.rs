@@ -52,7 +52,10 @@ async fn main() -> eyre::Result<()> {
         if let Some(gas_limit) = cli.gas_limit {
             config.gas_limit = gas_limit;
         }
-        let genesis = genesis::create_genesis(config);
+        let mut genesis = genesis::create_genesis(config);
+        if cli.zero_gas {
+            genesis.base_fee_per_gas = Some(0);
+        }
         let poa_config = PoaConfig {
             period: cli.block_time,
             epoch: 30000,
@@ -67,7 +70,10 @@ async fn main() -> eyre::Result<()> {
         if let Some(gas_limit) = cli.gas_limit {
             config.gas_limit = gas_limit;
         }
-        let genesis = genesis::create_genesis(config);
+        let mut genesis = genesis::create_genesis(config);
+        if cli.zero_gas {
+            genesis.base_fee_per_gas = Some(0);
+        }
         let poa_config = PoaConfig {
             period: cli.block_time,
             epoch: 30000,
@@ -299,7 +305,8 @@ async fn main() -> eyre::Result<()> {
                 .with_signer_manager(signer_manager.clone())
                 .with_cache_size(cli.cache_size)
                 .with_max_contract_size(cli.max_contract_size)
-                .with_calldata_gas(cli.calldata_gas),
+                .with_calldata_gas(cli.calldata_gas)
+                .with_zero_gas(cli.zero_gas),
         )
         .extend_rpc_modules(move |ctx| {
             let meow_rpc = MeowRpc::new(rpc_chain_spec, rpc_signer_manager, rpc_dev_mode);
@@ -355,6 +362,9 @@ async fn main() -> eyre::Result<()> {
         "Gas price oracle: {} blocks, {}th percentile",
         cli.gpo_blocks, cli.gpo_percentile
     ));
+    if cli.zero_gas {
+        output::print_feature("Zero-gas mode", "base fee disabled, gasPrice=0 accepted");
+    }
     if cli.log_json {
         output::print_feature("JSON logging", "structured output enabled");
     }

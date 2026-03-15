@@ -168,12 +168,13 @@ impl<CTX, I: Inspector<CTX>> Inspector<CTX> for CalldataDiscountInspector<I> {
 
 /// POA-customised EVM factory.
 ///
-/// Wraps [`EthEvmFactory`] and injects two POA-specific `CfgEnv` overrides:
+/// Wraps [`EthEvmFactory`] and injects POA-specific `CfgEnv` overrides:
 ///
 /// 1. `limit_contract_code_size` — lifts EIP-170's 24 KB bytecode cap.
 /// 2. Calldata gas discount — wraps every created EVM with
 ///    [`CalldataDiscountInspector`] so non-zero calldata bytes cost
 ///    `calldata_gas_per_byte` instead of the Ethereum default of 16.
+/// 3. Zero-gas mode — disables base fee validation so `gasPrice: 0` txs execute.
 #[derive(Debug, Clone)]
 pub struct PoaEvmFactory {
     inner: EthEvmFactory,
@@ -187,6 +188,9 @@ pub struct PoaEvmFactory {
     /// Ethereum mainnet: 16.  POA default: 4 (same as zero bytes — effectively
     /// free relative to zero bytes, maximises L2-style throughput).
     pub calldata_gas_per_byte: u64,
+    /// When `true`, sets `disable_base_fee = true` on every EVM instance.
+    /// This allows transactions with `gasPrice: 0` / `maxFeePerGas: 0`.
+    pub zero_gas: bool,
 }
 
 impl Default for PoaEvmFactory {
@@ -195,20 +199,27 @@ impl Default for PoaEvmFactory {
             inner: EthEvmFactory::default(),
             max_contract_size: None,
             calldata_gas_per_byte: 4, // POA default: reduce calldata cost
+            zero_gas: false,
         }
     }
 }
 
 impl PoaEvmFactory {
-    /// Create a factory with custom contract size and calldata gas overrides.
+    /// Create a factory with custom contract size, calldata gas, and zero-gas overrides.
     ///
     /// `calldata_gas_per_byte` is clamped to `[1, 16]`.
     /// Pass `16` to disable the calldata discount (Ethereum mainnet behaviour).
-    pub fn new(max_contract_size: Option<usize>, calldata_gas_per_byte: u64) -> Self {
+    /// Pass `zero_gas = true` to disable base fee validation (accept gasPrice=0 txs).
+    pub fn new(
+        max_contract_size: Option<usize>,
+        calldata_gas_per_byte: u64,
+        zero_gas: bool,
+    ) -> Self {
         Self {
             inner: EthEvmFactory::default(),
             max_contract_size,
             calldata_gas_per_byte: calldata_gas_per_byte.clamp(1, 16),
+            zero_gas,
         }
     }
 
@@ -218,6 +229,9 @@ impl PoaEvmFactory {
             env.cfg_env.limit_contract_code_size = Some(limit);
             // Also lift the initcode size limit (EIP-3860) proportionally.
             env.cfg_env.limit_contract_initcode_size = Some(limit * 2);
+        }
+        if self.zero_gas {
+            env.cfg_env.disable_base_fee = true;
         }
         env
     }
@@ -262,22 +276,25 @@ impl EvmFactory for PoaEvmFactory {
 /// Custom executor builder that uses [`PoaEvmFactory`] for EVM creation.
 ///
 /// Plugged into `PoaNode::components_builder` in place of
-/// `EthereumExecutorBuilder`.  Passes through both `max_contract_size`
-/// and `calldata_gas_per_byte` to the factory.
+/// `EthereumExecutorBuilder`.  Passes through `max_contract_size`,
+/// `calldata_gas_per_byte`, and `zero_gas` to the factory.
 #[derive(Debug, Clone)]
 pub struct PoaExecutorBuilder {
     /// Override for maximum deployed contract size.  `None` = Ethereum default.
     pub max_contract_size: Option<usize>,
     /// Gas cost per non-zero calldata byte (1–16). `16` = Ethereum mainnet default.
     pub calldata_gas_per_byte: u64,
+    /// Zero-gas mode: disable base fee validation in the EVM.
+    pub zero_gas: bool,
 }
 
 impl PoaExecutorBuilder {
     /// Create a builder with the given POA EVM settings.
-    pub fn new(max_contract_size: Option<usize>, calldata_gas_per_byte: u64) -> Self {
+    pub fn new(max_contract_size: Option<usize>, calldata_gas_per_byte: u64, zero_gas: bool) -> Self {
         Self {
             max_contract_size,
             calldata_gas_per_byte,
+            zero_gas,
         }
     }
 }
@@ -295,7 +312,7 @@ where
     async fn build_evm(self, ctx: &BuilderContext<Node>) -> eyre::Result<Self::EVM> {
         Ok(EthEvmConfig::new_with_evm_factory(
             ctx.chain_spec(),
-            PoaEvmFactory::new(self.max_contract_size, self.calldata_gas_per_byte),
+            PoaEvmFactory::new(self.max_contract_size, self.calldata_gas_per_byte, self.zero_gas),
         ))
     }
 }
@@ -318,21 +335,21 @@ mod tests {
 
     #[test]
     fn test_poa_evm_factory_no_override_keeps_default() {
-        let factory = PoaEvmFactory::new(None, 16);
+        let factory = PoaEvmFactory::new(None, 16, false);
         let patched = factory.patch_env(make_env());
         assert!(patched.cfg_env.limit_contract_code_size.is_none());
     }
 
     #[test]
     fn test_poa_evm_factory_applies_code_size_limit() {
-        let factory = PoaEvmFactory::new(Some(524_288), 16); // 512 KB
+        let factory = PoaEvmFactory::new(Some(524_288), 16, false); // 512 KB
         let patched = factory.patch_env(make_env());
         assert_eq!(patched.cfg_env.limit_contract_code_size, Some(524_288));
     }
 
     #[test]
     fn test_poa_evm_factory_sets_initcode_limit_double() {
-        let factory = PoaEvmFactory::new(Some(131_072), 16); // 128 KB
+        let factory = PoaEvmFactory::new(Some(131_072), 16, false); // 128 KB
         let patched = factory.patch_env(make_env());
         assert_eq!(
             patched.cfg_env.limit_contract_initcode_size,
@@ -398,7 +415,7 @@ mod tests {
 
     #[test]
     fn test_poa_evm_factory_at_16_no_discount() {
-        let factory = PoaEvmFactory::new(None, 16);
+        let factory = PoaEvmFactory::new(None, 16, false);
         assert!(!factory.has_calldata_discount());
     }
 
@@ -406,25 +423,53 @@ mod tests {
 
     #[test]
     fn test_poa_executor_builder_creation() {
-        let builder = PoaExecutorBuilder::new(Some(524_288), 4);
+        let builder = PoaExecutorBuilder::new(Some(524_288), 4, false);
         assert_eq!(builder.max_contract_size, Some(524_288));
         assert_eq!(builder.calldata_gas_per_byte, 4);
     }
 
     #[test]
     fn test_poa_executor_builder_no_override() {
-        let builder = PoaExecutorBuilder::new(None, 16);
+        let builder = PoaExecutorBuilder::new(None, 16, false);
         assert!(builder.max_contract_size.is_none());
         assert_eq!(builder.calldata_gas_per_byte, 16);
     }
 
     #[test]
     fn test_patch_env_does_not_change_other_fields() {
-        let factory = PoaEvmFactory::new(Some(65_536), 4);
+        let factory = PoaEvmFactory::new(Some(65_536), 4, false);
         let env = EvmEnv::default();
         let chain_id_before = env.cfg_env.chain_id;
         let patched = factory.patch_env(env);
         assert_eq!(patched.cfg_env.chain_id, chain_id_before);
         assert_eq!(patched.cfg_env.limit_contract_code_size, Some(65_536));
+    }
+
+    // ── zero-gas mode ────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_zero_gas_disables_base_fee() {
+        let factory = PoaEvmFactory::new(None, 16, true);
+        let patched = factory.patch_env(make_env());
+        assert!(patched.cfg_env.disable_base_fee);
+    }
+
+    #[test]
+    fn test_non_zero_gas_keeps_base_fee_enabled() {
+        let factory = PoaEvmFactory::new(None, 16, false);
+        let patched = factory.patch_env(make_env());
+        assert!(!patched.cfg_env.disable_base_fee);
+    }
+
+    #[test]
+    fn test_zero_gas_default_is_false() {
+        let factory = PoaEvmFactory::default();
+        assert!(!factory.zero_gas);
+    }
+
+    #[test]
+    fn test_poa_executor_builder_zero_gas() {
+        let builder = PoaExecutorBuilder::new(None, 4, true);
+        assert!(builder.zero_gas);
     }
 }
