@@ -27,7 +27,7 @@ use crate::onchain::StorageReader;
 pub type SharedCache = Arc<Mutex<HotStateCache>>;
 
 /// Configuration for the hot state cache.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub struct CacheConfig {
     /// Maximum number of `(address, slot) → value` entries held in RAM.
     pub max_entries: usize,

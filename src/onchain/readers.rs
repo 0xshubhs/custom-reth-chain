@@ -1,6 +1,4 @@
-use super::helpers::{
-    decode_address, decode_bool, decode_u64, dynamic_array_base_slot, mapping_address_bool_slot,
-};
+use super::helpers::{decode_address, decode_bool, decode_u64, mapping_address_bool_slot};
 use super::slots::{chain_config_slots, signer_registry_slots, timelock_slots};
 use super::StorageReader;
 use crate::genesis::{CHAIN_CONFIG_ADDRESS, SIGNER_REGISTRY_ADDRESS, TIMELOCK_ADDRESS};
@@ -10,7 +8,7 @@ use alloy_primitives::{Address, B256, U256};
 ///
 /// Replaces hardcoded values from genesis/CLI with governance-controlled parameters.
 /// Updated via: Governance Safe → ChainConfig.setGasLimit(300_000_000)
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct DynamicChainConfig {
     /// Governance address (the Safe multisig)
     pub governance: Address,
@@ -98,12 +96,13 @@ pub fn read_signer_list(reader: &impl StorageReader) -> Option<DynamicSignerList
     let threshold_val = reader.read_storage(addr, signer_registry_slots::SIGNER_THRESHOLD)?;
 
     let signer_count = decode_u64(length_val) as usize;
-    let base_slot = dynamic_array_base_slot(signer_registry_slots::SIGNERS_LENGTH);
 
     let mut signers = Vec::with_capacity(signer_count);
-    // Increment a U256 slot counter directly instead of calling U256::from(i)
-    // on each iteration — avoids a 256-bit construction per loop iteration.
-    let mut slot = base_slot;
+    // Start from the pre-computed compile-time constant base slot rather than
+    // computing keccak256 at runtime.  Increment a U256 slot counter directly
+    // instead of calling U256::from(i) on each iteration — avoids a 256-bit
+    // construction per loop iteration.
+    let mut slot = signer_registry_slots::SIGNERS_ARRAY_BASE_SLOT_U256;
     for _ in 0..signer_count {
         if let Some(val) = reader.read_storage(addr, slot) {
             signers.push(decode_address(val));

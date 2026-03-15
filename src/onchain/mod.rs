@@ -249,6 +249,18 @@ mod tests {
             our_base, genesis_base,
             "Array base slot must match genesis.rs computation"
         );
+
+        // The compile-time const must equal the runtime keccak256 result.
+        assert_eq!(
+            signer_registry_slots::SIGNERS_ARRAY_BASE_SLOT_U256,
+            our_base,
+            "SIGNERS_ARRAY_BASE_SLOT_U256 const must equal keccak256(slot 1)"
+        );
+        assert_eq!(
+            U256::from_be_bytes(signer_registry_slots::SIGNERS_ARRAY_BASE_SLOT.0),
+            our_base,
+            "SIGNERS_ARRAY_BASE_SLOT (B256) const must equal keccak256(slot 1)"
+        );
     }
 
     #[test]

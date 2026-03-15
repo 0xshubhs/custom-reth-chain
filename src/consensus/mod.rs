@@ -134,19 +134,28 @@ impl PoaConsensus {
             .map_err(|_| cold_invalid_signature())
     }
 
-    /// Calculate the hash used for sealing (excludes the signature from extra data)
+    /// Calculate the hash used for sealing (excludes the signature from extra data).
+    ///
+    /// Uses `Bytes::slice` to produce the truncated extra_data view — this shares
+    /// the underlying buffer (O(1) arc bump, no heap copy).  The Header struct copy
+    /// that follows is cheap: all other fields are fixed-size primitives (B256, Bloom,
+    /// u64, etc.) with no heap allocation.
     pub fn seal_hash(&self, header: &Header) -> B256 {
-        // Clone the header struct, then replace extra_data using Bytes::slice so
-        // the truncated view shares the same underlying buffer (arc bump, O(1))
-        // rather than allocating a new Vec via to_vec().
-        let mut header_for_hash = header.clone();
-
         let extra_len = header.extra_data.len();
-        if extra_len >= EXTRA_SEAL_LENGTH {
-            header_for_hash.extra_data = header.extra_data.slice(..extra_len - EXTRA_SEAL_LENGTH);
-        }
+        // Produce a truncated extra_data that shares the same Bytes buffer (arc bump).
+        let truncated_extra = if extra_len >= EXTRA_SEAL_LENGTH {
+            header.extra_data.slice(..extra_len - EXTRA_SEAL_LENGTH)
+        } else {
+            header.extra_data.clone()
+        };
 
-        // Hash the modified header
+        // Struct-copy the header with only extra_data replaced; no additional heap
+        // allocation because all other Header fields are Copy/fixed-size.
+        let header_for_hash = Header {
+            extra_data: truncated_extra,
+            ..header.clone()
+        };
+
         keccak256(alloy_rlp::encode(&header_for_hash))
     }
 

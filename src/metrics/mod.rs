@@ -22,7 +22,7 @@ use std::time::{Duration, Instant};
 // ── Per-block metrics ─────────────────────────────────────────────────────────
 
 /// Timing and statistics for a single block.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub struct BlockMetrics {
     /// Block number.
     pub block_number: u64,
@@ -132,7 +132,7 @@ impl<T: Copy + Default> SlidingWindow<T> {
 // ── ChainMetrics ──────────────────────────────────────────────────────────────
 
 /// Snapshot of aggregated chain performance metrics.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Copy, Default)]
 pub struct MetricsSnapshot {
     /// Total blocks produced since the node started.
     pub total_blocks: u64,
@@ -345,6 +345,7 @@ impl ChainMetrics {
 /// // ... do work ...
 /// let build_duration = timer.elapsed();
 /// ```
+#[derive(Clone, Copy)]
 pub struct PhaseTimer {
     start: Instant,
 }

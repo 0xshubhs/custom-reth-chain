@@ -26,7 +26,7 @@ use std::collections::HashMap;
 // ── Per-account diff ──────────────────────────────────────────────────────────
 
 /// Difference in a single storage slot value.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct StorageSlotDiff {
     /// Value before the block executed.
     pub old_value: B256,

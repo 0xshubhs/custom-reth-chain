@@ -11,7 +11,7 @@ use example_custom_poa_node::signer::{self, SignerManager};
 use example_custom_poa_node::statediff::StateDiffBuilder;
 
 use alloy_consensus::BlockHeader;
-use alloy_primitives::B256;
+use alloy_primitives::{Address, B256};
 use clap::Parser;
 use futures_util::StreamExt;
 use reth_db::init_db;
@@ -412,58 +412,78 @@ async fn main() -> eyre::Result<()> {
             let gas_used = block.header().gas_used();
 
             // Determine which signer should sign this block (round-robin).
+            // Use with_effective_signers to respect live governance (same view as
+            // PoaPayloadBuilder), avoiding a Vec clone on the hot path.
             // Check early so we can skip expensive state-diff work when no signers are configured.
-            let signers = monitoring_chain_spec.signers();
-            if signers.is_empty() {
+            let (is_empty_signers, expected_signer) =
+                monitoring_chain_spec.with_effective_signers(|signers| {
+                    if signers.is_empty() {
+                        return (true, Address::ZERO);
+                    }
+                    let idx = (block_num as usize) % signers.len();
+                    (false, signers[idx])
+                });
+            if is_empty_signers {
                 output::print_block_no_signers(block_num, tx_count);
                 continue;
             }
-            let signer_index = (block_num as usize) % signers.len();
-            let expected_signer = signers[signer_index];
 
             // ── State diff (Phase 2.18): build StateDiff from execution_outcome ──
             // Captures balance/nonce/code + storage changes for replica sync foundation.
-            let chain = notification.committed();
-            let outcome = chain.execution_outcome();
-            let block_hash = block.hash();
-            let mut diff_builder = StateDiffBuilder::new(block_num, block_hash)
-                .with_gas_used(gas_used)
-                .with_tx_count(tx_count);
-            for (addr, account) in outcome.bundle_accounts_iter() {
-                // Account-level changes: balance, nonce, code
-                match (&account.original_info, &account.info) {
-                    (Some(old), Some(new)) => {
-                        if old.balance != new.balance {
-                            diff_builder.record_balance_change(addr, old.balance, new.balance);
+            // Skip the allocation and bundle iteration entirely for empty blocks —
+            // they touch only the coinbase (miner reward) with no storage changes,
+            // so the diff is never displayed anyway (guarded by tx_count > 0 below).
+            let (accounts_changed, slots_changed) = if tx_count > 0 {
+                let chain = notification.committed();
+                let outcome = chain.execution_outcome();
+                let block_hash = block.hash();
+                let mut diff_builder = StateDiffBuilder::new(block_num, block_hash)
+                    .with_gas_used(gas_used)
+                    .with_tx_count(tx_count);
+                for (addr, account) in outcome.bundle_accounts_iter() {
+                    // Account-level changes: balance, nonce, code
+                    match (&account.original_info, &account.info) {
+                        (Some(old), Some(new)) => {
+                            if old.balance != new.balance {
+                                diff_builder.record_balance_change(addr, old.balance, new.balance);
+                            }
+                            if old.nonce != new.nonce {
+                                diff_builder.record_nonce_change(addr, old.nonce, new.nonce);
+                            }
+                            if old.code_hash != new.code_hash {
+                                diff_builder.record_code_change(addr);
+                            }
                         }
-                        if old.nonce != new.nonce {
-                            diff_builder.record_nonce_change(addr, old.nonce, new.nonce);
-                        }
-                        if old.code_hash != new.code_hash {
-                            diff_builder.record_code_change(addr);
+                        (None, Some(_)) => diff_builder.record_code_change(addr), // created
+                        (Some(_), None) => diff_builder.record_code_change(addr), // destroyed
+                        (None, None) => {}
+                    }
+                    // Storage-slot changes
+                    for (slot_key, slot) in &account.storage {
+                        if slot.is_changed() {
+                            let old =
+                                B256::from(slot.previous_or_original_value.to_be_bytes::<32>());
+                            let new = B256::from(slot.present_value.to_be_bytes::<32>());
+                            diff_builder.record_storage_change(addr, *slot_key, old, new);
                         }
                     }
-                    (None, Some(_)) => diff_builder.record_code_change(addr), // created
-                    (Some(_), None) => diff_builder.record_code_change(addr), // destroyed
-                    (None, None) => {}
                 }
-                // Storage-slot changes
-                for (slot_key, slot) in &account.storage {
-                    if slot.is_changed() {
-                        let old = B256::from(slot.previous_or_original_value.to_be_bytes::<32>());
-                        let new = B256::from(slot.present_value.to_be_bytes::<32>());
-                        diff_builder.record_storage_change(addr, *slot_key, old, new);
-                    }
-                }
-            }
-            let state_diff = diff_builder.build();
-            let accounts_changed = state_diff.touched_account_count();
-            let slots_changed = state_diff.total_storage_changes();
+                let state_diff = diff_builder.build();
+                (state_diff.touched_account_count(), state_diff.total_storage_changes())
+            } else {
+                (0, 0)
+            };
 
             // Determine if this is an in-turn block for metrics.
-            // Single lock acquisition: first_signer_in returns the first key we hold that
-            // is in the authorized signer set, or None.
-            let our_signer = monitoring_signer_manager.first_signer_in(signers).await;
+            // `first_signer_in` is async so we cannot hold the RwLock read-guard
+            // across the .await boundary.  We use `effective_signers()` (which
+            // clones the list once under the read-lock, then releases it) so that
+            // the async call sees the live governance list, not just the genesis list.
+            // The clone is cheap: ≤21 signers × 20 bytes = ≤420 bytes.
+            let effective = monitoring_chain_spec.effective_signers();
+            let our_signer = monitoring_signer_manager
+                .first_signer_in(&effective)
+                .await;
             let in_turn = our_signer == Some(expected_signer);
 
             // Check if we have the key for the expected signer

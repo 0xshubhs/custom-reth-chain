@@ -58,7 +58,7 @@ impl TxAccessRecord {
 }
 
 /// A (contract address, storage slot) pair used as a key in access sets.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct AccessKey {
     /// The account whose storage is accessed.
     pub address: Address,
@@ -96,7 +96,7 @@ impl AccessKey {
 /// Because we execute transactions in index order, only the *later* of the two
 /// transactions can observe the earlier one's writes — so WAR and RAW are only
 /// hazards when `tx_b` comes *after* `tx_a`.
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone, Copy)]
 pub struct ConflictDetector;
 
 impl ConflictDetector {
