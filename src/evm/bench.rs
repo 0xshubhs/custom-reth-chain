@@ -804,7 +804,7 @@ mod tests {
 
         // -- Ethereum default (no override) --
         let factory_default = PoaEvmFactory::new(None, 16, false);
-        let env_default = factory_default.patch_env(EvmEnv::default());
+        let env_default = factory_default.patch_env(EvmEnv::<SpecId, BlockEnv>::default());
         assert!(
             env_default.cfg_env.limit_contract_code_size.is_none(),
             "no override means None (revm uses MAX_CODE_SIZE internally)"
@@ -814,7 +814,7 @@ mod tests {
         // -- 128 KB override --
         let size_128k: usize = 128 * 1024;
         let factory_128k = PoaEvmFactory::new(Some(size_128k), 16, false);
-        let env_128k = factory_128k.patch_env(EvmEnv::default());
+        let env_128k = factory_128k.patch_env(EvmEnv::<SpecId, BlockEnv>::default());
         assert_eq!(env_128k.cfg_env.limit_contract_code_size, Some(size_128k));
         assert_eq!(
             env_128k.cfg_env.limit_contract_initcode_size,
@@ -825,7 +825,7 @@ mod tests {
         // -- 512 KB override (MegaETH-inspired target) --
         let size_512k: usize = 512 * 1024;
         let factory_512k = PoaEvmFactory::new(Some(size_512k), 4, false);
-        let env_512k = factory_512k.patch_env(EvmEnv::default());
+        let env_512k = factory_512k.patch_env(EvmEnv::<SpecId, BlockEnv>::default());
         assert_eq!(env_512k.cfg_env.limit_contract_code_size, Some(size_512k));
         assert_eq!(
             env_512k.cfg_env.limit_contract_initcode_size,

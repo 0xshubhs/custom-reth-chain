@@ -21,12 +21,14 @@ use crate::output;
 use crate::signer::{BlockSealer, SignerManager};
 use alloy_primitives::{Address, Bytes, U256};
 use reth_basic_payload_builder::{
-    BuildArguments, BuildOutcome, MissingPayloadBehaviour, PayloadBuilder, PayloadConfig,
+    BuildArguments, BuildOutcome, HeaderForPayload, MissingPayloadBehaviour, PayloadBuilder,
+    PayloadConfig,
 };
 use reth_chainspec::{ChainSpecProvider, EthereumHardforks};
 use reth_ethereum::storage::StateProviderFactory;
 use reth_ethereum::EthPrimitives;
-use reth_ethereum_engine_primitives::{EthBuiltPayload, EthPayloadBuilderAttributes};
+use reth_ethereum_engine_primitives::EthBuiltPayload;
+use reth_ethereum_engine_primitives::EthPayloadAttributes;
 use reth_evm::{ConfigureEvm, NextBlockEnvAttributes};
 use reth_payload_builder_primitives::PayloadBuilderError;
 use reth_payload_primitives::BuiltPayload;
@@ -67,12 +69,12 @@ where
     Pool:
         TransactionPool<Transaction: PoolTransaction<Consensus = reth_ethereum::TransactionSigned>>,
 {
-    type Attributes = EthPayloadBuilderAttributes;
+    type Attributes = EthPayloadAttributes;
     type BuiltPayload = EthBuiltPayload;
 
     fn try_build(
         &self,
-        args: BuildArguments<EthPayloadBuilderAttributes, EthBuiltPayload>,
+        args: BuildArguments<EthPayloadAttributes, EthBuiltPayload>,
     ) -> Result<BuildOutcome<EthBuiltPayload>, PayloadBuilderError> {
         // 1. Let the inner builder construct the block (transactions, state, etc.)
         let build_timer = PhaseTimer::start();
@@ -108,7 +110,7 @@ where
 
     fn build_empty_payload(
         &self,
-        config: PayloadConfig<Self::Attributes>,
+        config: PayloadConfig<Self::Attributes, HeaderForPayload<Self::BuiltPayload>>,
     ) -> Result<EthBuiltPayload, PayloadBuilderError> {
         let build_timer = PhaseTimer::start();
         let payload = self.inner.build_empty_payload(config)?;
@@ -262,7 +264,6 @@ where
         let sealed = SealedBlock::seal_slow(new_block);
 
         Ok(EthBuiltPayload::new(
-            payload.id(),
             Arc::new(sealed),
             payload.fees(),
             payload.requests(),

@@ -11,9 +11,7 @@ use reth_ethereum::node::builder::{components::PayloadBuilderBuilder, BuilderCon
 use reth_ethereum::node::core::cli::config::PayloadBuilderConfig;
 use reth_ethereum::storage::StateProviderFactory;
 use reth_ethereum::EthPrimitives;
-use reth_ethereum_engine_primitives::{
-    EthBuiltPayload, EthPayloadAttributes, EthPayloadBuilderAttributes,
-};
+use reth_ethereum_engine_primitives::{EthBuiltPayload, EthPayloadAttributes};
 use reth_ethereum_payload_builder::EthereumBuilderConfig;
 use reth_evm::{ConfigureEvm, NextBlockEnvAttributes};
 use reth_payload_primitives::PayloadTypes;
@@ -67,7 +65,6 @@ where
     Types::Payload: PayloadTypes<
         BuiltPayload = EthBuiltPayload,
         PayloadAttributes = EthPayloadAttributes,
-        PayloadBuilderAttributes = EthPayloadBuilderAttributes,
     >,
 {
     type PayloadBuilder = PoaPayloadBuilder<Pool, Node::Provider, Evm>;
