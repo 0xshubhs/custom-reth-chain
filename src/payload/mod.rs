@@ -21,12 +21,14 @@ use crate::output;
 use crate::signer::{BlockSealer, SignerManager};
 use alloy_primitives::{Address, Bytes, U256};
 use reth_basic_payload_builder::{
-    BuildArguments, BuildOutcome, MissingPayloadBehaviour, PayloadBuilder, PayloadConfig,
+    BuildArguments, BuildOutcome, HeaderForPayload, MissingPayloadBehaviour, PayloadBuilder,
+    PayloadConfig,
 };
 use reth_chainspec::{ChainSpecProvider, EthereumHardforks};
 use reth_ethereum::storage::StateProviderFactory;
 use reth_ethereum::EthPrimitives;
-use reth_ethereum_engine_primitives::{EthBuiltPayload, EthPayloadBuilderAttributes};
+use reth_ethereum_engine_primitives::EthBuiltPayload;
+use reth_ethereum_engine_primitives::EthPayloadAttributes;
 use reth_evm::{ConfigureEvm, NextBlockEnvAttributes};
 use reth_payload_builder_primitives::PayloadBuilderError;
 use reth_payload_primitives::BuiltPayload;
@@ -69,12 +71,12 @@ where
     Pool:
         TransactionPool<Transaction: PoolTransaction<Consensus = reth_ethereum::TransactionSigned>>,
 {
-    type Attributes = EthPayloadBuilderAttributes;
+    type Attributes = EthPayloadAttributes;
     type BuiltPayload = EthBuiltPayload;
 
     fn try_build(
         &self,
-        mut args: BuildArguments<EthPayloadBuilderAttributes, EthBuiltPayload>,
+        mut args: BuildArguments<EthPayloadAttributes, EthBuiltPayload>,
     ) -> Result<BuildOutcome<EthBuiltPayload>, PayloadBuilderError> {
         // 0. Infinite-fund: inject one EIP-4895 withdrawal per whitelisted address.
         //    Withdrawals are protocol-level balance credits — the executor's
@@ -92,15 +94,18 @@ where
             let child_number = args.config.parent_header.number + 1;
             let fund_count = self.infinite_fund.len() as u64;
             let base_index = child_number.saturating_mul(fund_count);
+            let withdrawals = args
+                .config
+                .attributes
+                .withdrawals
+                .get_or_insert_with(Vec::new);
             for (i, addr) in self.infinite_fund.iter().enumerate() {
-                args.config.attributes.withdrawals.0.push(
-                    alloy_eips::eip4895::Withdrawal {
-                        index: base_index + i as u64,
-                        validator_index: 0,
-                        address: *addr,
-                        amount: PER_BLOCK_GWEI,
-                    },
-                );
+                withdrawals.push(alloy_eips::eip4895::Withdrawal {
+                    index: base_index + i as u64,
+                    validator_index: 0,
+                    address: *addr,
+                    amount: PER_BLOCK_GWEI,
+                });
             }
         }
 
@@ -138,7 +143,7 @@ where
 
     fn build_empty_payload(
         &self,
-        mut config: PayloadConfig<Self::Attributes>,
+        mut config: PayloadConfig<Self::Attributes, HeaderForPayload<Self::BuiltPayload>>,
     ) -> Result<EthBuiltPayload, PayloadBuilderError> {
         // Mirror the infinite-fund withdrawal injection from try_build so that
         // empty payloads also credit the whitelisted addresses. Indices are
@@ -148,15 +153,17 @@ where
             let child_number = config.parent_header.number + 1;
             let fund_count = self.infinite_fund.len() as u64;
             let base_index = child_number.saturating_mul(fund_count);
+            let withdrawals = config
+                .attributes
+                .withdrawals
+                .get_or_insert_with(Vec::new);
             for (i, addr) in self.infinite_fund.iter().enumerate() {
-                config.attributes.withdrawals.0.push(
-                    alloy_eips::eip4895::Withdrawal {
-                        index: base_index + i as u64,
-                        validator_index: 0,
-                        address: *addr,
-                        amount: PER_BLOCK_GWEI,
-                    },
-                );
+                withdrawals.push(alloy_eips::eip4895::Withdrawal {
+                    index: base_index + i as u64,
+                    validator_index: 0,
+                    address: *addr,
+                    amount: PER_BLOCK_GWEI,
+                });
             }
         }
         let build_timer = PhaseTimer::start();
@@ -311,7 +318,6 @@ where
         let sealed = SealedBlock::seal_slow(new_block);
 
         Ok(EthBuiltPayload::new(
-            payload.id(),
             Arc::new(sealed),
             payload.fees(),
             payload.requests(),

@@ -50,6 +50,7 @@ use reth_ethereum::node::EthEvmConfig;
 use reth_ethereum::EthPrimitives;
 use reth_ethereum_forks::Hardforks;
 
+
 // ─── Calldata gas discount inspector ──────────────────────────────────────────
 
 /// Inspector wrapper that grants a calldata gas discount at the start of each
@@ -222,14 +223,15 @@ pub struct PoaEvmFactory {
     /// Ethereum mainnet: 16.  POA default: 4 (same as zero bytes — effectively
     /// free relative to zero bytes, maximises L2-style throughput).
     pub calldata_gas_per_byte: u64,
-    /// When `true`, sets `disable_base_fee = true` on every EVM instance.
-    /// This allows transactions with `gasPrice: 0` / `maxFeePerGas: 0`.
+    /// When `true`, the genesis sets `base_fee = 0` so that transactions with
+    /// `gasPrice: 0` / `maxFeePerGas: 0` are accepted (base fee check passes
+    /// trivially since any `max_fee_per_gas >= 0`).
     pub zero_gas: bool,
     /// Pre-computed flag: `true` if `patch_env` has any work to do.
     ///
     /// Allows the hot-path EVM creation calls (`create_evm` / `create_evm_with_inspector`)
     /// to skip the `patch_env` call entirely when all overrides are at their defaults
-    /// (`max_contract_size = None`, `zero_gas = false`).
+    /// (`max_contract_size = None`).
     needs_env_patch: bool,
 }
 
@@ -256,7 +258,7 @@ impl PoaEvmFactory {
         calldata_gas_per_byte: u64,
         zero_gas: bool,
     ) -> Self {
-        let needs_env_patch = max_contract_size.is_some() || zero_gas;
+        let needs_env_patch = max_contract_size.is_some();
         Self {
             inner: EthEvmFactory::default(),
             max_contract_size,
@@ -271,14 +273,11 @@ impl PoaEvmFactory {
     /// Only called when `needs_env_patch` is `true`; callers must check that flag
     /// before invoking this to avoid the function-call overhead on the hot path.
     #[inline]
-    fn patch_env(&self, mut env: EvmEnv) -> EvmEnv {
+    fn patch_env<S, B>(&self, mut env: EvmEnv<S, B>) -> EvmEnv<S, B> {
         if let Some(limit) = self.max_contract_size {
             env.cfg_env.limit_contract_code_size = Some(limit);
             // Also lift the initcode size limit (EIP-3860) proportionally.
             env.cfg_env.limit_contract_initcode_size = Some(limit * 2);
-        }
-        if self.zero_gas {
-            env.cfg_env.disable_base_fee = true;
         }
         env
     }
@@ -304,7 +303,11 @@ impl EvmFactory for PoaEvmFactory {
     type BlockEnv = BlockEnv;
     type Precompiles = PrecompilesMap;
 
-    fn create_evm<DB: Database>(&self, db: DB, input: EvmEnv) -> Self::Evm<DB, NoOpInspector> {
+    fn create_evm<DB: Database>(
+        &self,
+        db: DB,
+        input: EvmEnv<Self::Spec, Self::BlockEnv>,
+    ) -> Self::Evm<DB, NoOpInspector> {
         // Skip patch_env entirely when no CfgEnv overrides are active.
         let env = if self.needs_env_patch { self.patch_env(input) } else { input };
         self.inner.create_evm(db, env)
@@ -313,7 +316,7 @@ impl EvmFactory for PoaEvmFactory {
     fn create_evm_with_inspector<DB: Database, I: Inspector<Self::Context<DB>>>(
         &self,
         db: DB,
-        input: EvmEnv,
+        input: EvmEnv<Self::Spec, Self::BlockEnv>,
         inspector: I,
     ) -> Self::Evm<DB, I> {
         let env = if self.needs_env_patch { self.patch_env(input) } else { input };
@@ -349,15 +352,16 @@ impl PoaExecutorBuilder {
     }
 }
 
-impl<Types, Node> ExecutorBuilder<Node> for PoaExecutorBuilder
+impl<Node> ExecutorBuilder<Node> for PoaExecutorBuilder
 where
-    Types: NodeTypes<
-        ChainSpec: Hardforks + EthExecutorSpec + EthereumHardforks,
-        Primitives = EthPrimitives,
+    Node: FullNodeTypes<
+        Types: NodeTypes<
+            ChainSpec: Hardforks + EthExecutorSpec + EthereumHardforks,
+            Primitives = EthPrimitives,
+        >,
     >,
-    Node: FullNodeTypes<Types = Types>,
 {
-    type EVM = EthEvmConfig<Types::ChainSpec, PoaEvmFactory>;
+    type EVM = EthEvmConfig<<Node::Types as NodeTypes>::ChainSpec, PoaEvmFactory>;
 
     async fn build_evm(self, ctx: &BuilderContext<Node>) -> eyre::Result<Self::EVM> {
         Ok(EthEvmConfig::new_with_evm_factory(
@@ -377,7 +381,7 @@ mod tests {
     use super::*;
     use alloy_evm::EvmEnv;
 
-    fn make_env() -> EvmEnv {
+    fn make_env() -> EvmEnv<SpecId, BlockEnv> {
         EvmEnv::default()
     }
 
@@ -490,7 +494,7 @@ mod tests {
     #[test]
     fn test_patch_env_does_not_change_other_fields() {
         let factory = PoaEvmFactory::new(Some(65_536), 4, false);
-        let env = EvmEnv::default();
+        let env: EvmEnv = EvmEnv::default();
         let chain_id_before = env.cfg_env.chain_id;
         let patched = factory.patch_env(env);
         assert_eq!(patched.cfg_env.chain_id, chain_id_before);
@@ -498,19 +502,14 @@ mod tests {
     }
 
     // ── zero-gas mode ────────────────────────────────────────────────────────
+    // Zero-gas mode now works via genesis base_fee=0 rather than CfgEnv.disable_base_fee
+    // (which is behind a feature flag in revm 36). The factory stores the flag for
+    // genesis configuration; the EVM itself needs no CfgEnv override.
 
     #[test]
-    fn test_zero_gas_disables_base_fee() {
+    fn test_zero_gas_flag_stored() {
         let factory = PoaEvmFactory::new(None, 16, true);
-        let patched = factory.patch_env(make_env());
-        assert!(patched.cfg_env.disable_base_fee);
-    }
-
-    #[test]
-    fn test_non_zero_gas_keeps_base_fee_enabled() {
-        let factory = PoaEvmFactory::new(None, 16, false);
-        let patched = factory.patch_env(make_env());
-        assert!(!patched.cfg_env.disable_base_fee);
+        assert!(factory.zero_gas);
     }
 
     #[test]
