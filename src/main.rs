@@ -11,7 +11,7 @@ use example_custom_poa_node::signer::{self, SignerManager};
 use example_custom_poa_node::statediff::StateDiffBuilder;
 
 use alloy_consensus::BlockHeader;
-use alloy_primitives::{Address, B256};
+use alloy_primitives::{Address, B256, U256};
 use clap::Parser;
 use futures_util::StreamExt;
 use reth_db::init_db;
@@ -34,6 +34,74 @@ use std::{
     time::{Duration, Instant},
 };
 
+/// Parse a balance string into a U256 amount in wei.
+///
+/// Accepts: `"1000000eth"`, `"1e25wei"`, `"1e25"`, or raw decimal wei (`"1000000000000000000"`).
+/// The `eth` suffix multiplies by 10^18. `wei` suffix (or no suffix) is raw wei.
+/// Scientific notation (`1e25`) is expanded before parsing.
+fn parse_balance(s: &str) -> eyre::Result<U256> {
+    let trimmed = s.trim().to_lowercase();
+    let (num_str, multiplier) = if let Some(stripped) = trimmed.strip_suffix("eth") {
+        (stripped.trim().to_string(), U256::from(10u64).pow(U256::from(18u64)))
+    } else if let Some(stripped) = trimmed.strip_suffix("wei") {
+        (stripped.trim().to_string(), U256::from(1u64))
+    } else {
+        (trimmed.clone(), U256::from(1u64))
+    };
+
+    // Expand scientific notation like "1e25" → "10000...0"
+    let expanded = if let Some((mantissa, exp)) = num_str.split_once('e') {
+        let exp: u32 = exp.parse().map_err(|_| eyre::eyre!("bad exponent in balance: {s}"))?;
+        let mantissa_parts: Vec<&str> = mantissa.split('.').collect();
+        let (int_part, frac_part) = match mantissa_parts.as_slice() {
+            [i] => (*i, ""),
+            [i, f] => (*i, *f),
+            _ => return Err(eyre::eyre!("bad mantissa in balance: {s}")),
+        };
+        let frac_len = frac_part.len() as u32;
+        if exp < frac_len {
+            return Err(eyre::eyre!("fractional wei not supported: {s}"));
+        }
+        let zeros = "0".repeat((exp - frac_len) as usize);
+        format!("{int_part}{frac_part}{zeros}")
+    } else {
+        num_str
+    };
+
+    let base = U256::from_str_radix(&expanded, 10)
+        .map_err(|e| eyre::eyre!("bad balance '{s}': {e}"))?;
+    Ok(base * multiplier)
+}
+
+/// Apply `--prefund-all` and `--fund` CLI flags to a `GenesisConfig` before genesis creation.
+fn apply_fund_flags(
+    config: &mut genesis::GenesisConfig,
+    prefund_all: &Option<String>,
+    fund: &[String],
+) -> eyre::Result<()> {
+    if let Some(amount_str) = prefund_all {
+        let amount = parse_balance(amount_str)?;
+        for bal in config.prefunded_accounts.values_mut() {
+            *bal = amount;
+        }
+        output::print_prefund_all(amount_str);
+    }
+
+    for entry in fund {
+        let (addr_str, amount_str) = entry.split_once(':').ok_or_else(|| {
+            eyre::eyre!("--fund entry must be '<address>:<amount>', got '{entry}'")
+        })?;
+        let addr: Address = addr_str
+            .trim()
+            .parse()
+            .map_err(|e| eyre::eyre!("bad address in --fund '{entry}': {e}"))?;
+        let amount = parse_balance(amount_str)?;
+        config.prefunded_accounts.insert(addr, amount);
+        output::print_fund(&addr, amount_str);
+    }
+    Ok(())
+}
+
 /// Main entry point for the POA node
 #[tokio::main]
 async fn main() -> eyre::Result<()> {
@@ -52,6 +120,7 @@ async fn main() -> eyre::Result<()> {
         if let Some(gas_limit) = cli.gas_limit {
             config.gas_limit = gas_limit;
         }
+        apply_fund_flags(&mut config, &cli.prefund_all, &cli.fund)?;
         let mut genesis = genesis::create_genesis(config);
         if cli.zero_gas {
             genesis.base_fee_per_gas = Some(0);
@@ -70,6 +139,7 @@ async fn main() -> eyre::Result<()> {
         if let Some(gas_limit) = cli.gas_limit {
             config.gas_limit = gas_limit;
         }
+        apply_fund_flags(&mut config, &cli.prefund_all, &cli.fund)?;
         let mut genesis = genesis::create_genesis(config);
         if cli.zero_gas {
             genesis.base_fee_per_gas = Some(0);
@@ -91,6 +161,11 @@ async fn main() -> eyre::Result<()> {
         Duration::from_secs(chain_spec_arc.block_period())
     };
 
+    if !cli.infinite_fund.is_empty() {
+        for addr in &cli.infinite_fund {
+            output::print_fund(addr, "infinite (per-block withdrawal)");
+        }
+    }
     output::print_banner(chain_spec_arc.inner().chain.id(), mining_interval);
     let mode_str = match (is_dev_mode, cli.mining) {
         (true, _) => "dev",
@@ -297,7 +372,8 @@ async fn main() -> eyre::Result<()> {
                 .with_cache_size(cli.cache_size)
                 .with_max_contract_size(cli.max_contract_size)
                 .with_calldata_gas(cli.calldata_gas)
-                .with_zero_gas(cli.zero_gas),
+                .with_zero_gas(cli.zero_gas)
+                .with_infinite_fund(cli.infinite_fund.clone()),
         )
         .extend_rpc_modules(move |ctx| {
             let meow_rpc = MeowRpc::new(rpc_chain_spec.clone(), rpc_signer_manager.clone(), is_dev_mode);

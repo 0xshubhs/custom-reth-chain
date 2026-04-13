@@ -4,7 +4,7 @@ use crate::consensus::{EXTRA_SEAL_LENGTH, EXTRA_VANITY_LENGTH};
 use crate::onchain::{read_gas_limit, read_signer_list, StateProviderStorageReader};
 use crate::output;
 use crate::signer::SignerManager;
-use alloy_primitives::Bytes;
+use alloy_primitives::{Address, Bytes};
 use reth_chainspec::{EthChainSpec, EthereumHardforks};
 use reth_ethereum::node::api::{FullNodeTypes, NodeTypes, PrimitivesTy, TxTy};
 use reth_ethereum::node::builder::{components::PayloadBuilderBuilder, BuilderContext};
@@ -31,6 +31,8 @@ pub struct PoaPayloadBuilderBuilder {
     pub(crate) dev_mode: bool,
     /// Capacity for the per-builder hot state cache (number of (address, slot) entries).
     pub(crate) cache_size: usize,
+    /// Addresses to credit with a withdrawal on every built block (infinite fund).
+    pub(crate) infinite_fund: Vec<Address>,
 }
 
 impl PoaPayloadBuilderBuilder {
@@ -45,12 +47,19 @@ impl PoaPayloadBuilderBuilder {
             signer_manager,
             dev_mode,
             cache_size: CacheConfig::default().max_entries,
+            infinite_fund: Vec::new(),
         }
     }
 
     /// Override the hot state cache capacity (Phase 5.31).
     pub fn with_cache_size(mut self, size: usize) -> Self {
         self.cache_size = size.max(1); // at least 1 entry
+        self
+    }
+
+    /// Set the list of addresses to receive a per-block withdrawal credit.
+    pub fn with_infinite_fund(mut self, addrs: Vec<Address>) -> Self {
+        self.infinite_fund = addrs;
         self
     }
 }
@@ -143,6 +152,7 @@ where
             dev_mode: self.dev_mode,
             client: ctx.provider().clone(),
             cache,
+            infinite_fund: Arc::new(self.infinite_fund),
         })
     }
 }
