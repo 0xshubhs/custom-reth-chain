@@ -1,3 +1,4 @@
+use alloy_primitives::Address;
 use clap::Parser;
 use std::path::PathBuf;
 
@@ -149,14 +150,17 @@ pub struct Cli {
     ///
     /// Available: eth, net, web3, debug, txpool, admin, trace.
     /// The `meow` namespace is always added automatically.
-    #[arg(long, default_value = "eth,net,web3")]
+    /// `txpool` is enabled by default — Blockscout's indexer and some
+    /// wallet flows rely on `txpool_content` / `txpool_status`.
+    #[arg(long, default_value = "eth,net,web3,txpool")]
     pub http_api: String,
 
     /// Comma-separated list of WebSocket RPC API modules to enable.
     ///
     /// Available: eth, net, web3, debug, txpool, admin, trace.
     /// The `meow` namespace is always added automatically.
-    #[arg(long, default_value = "eth,net,web3")]
+    /// `txpool` is enabled by default — matches the HTTP default.
+    #[arg(long, default_value = "eth,net,web3,txpool")]
     pub ws_api: String,
 
     /// Enable structured JSON logging instead of human-readable output.
@@ -209,4 +213,39 @@ pub struct Cli {
     /// Range: 0-100.
     #[arg(long, default_value = "60")]
     pub gpo_percentile: u32,
+
+    /// Prefund an address with a custom balance at genesis (repeatable).
+    ///
+    /// Format: `<address>:<amount>` where amount is either raw wei (e.g. `1000000000000000000`)
+    /// or a suffix-annotated value: `100eth`, `1000000eth`, `1e25wei`.
+    /// Only applied on first boot — genesis is baked into the DB, so changing this
+    /// after initial start requires wiping the datadir.
+    ///
+    /// Example: `--fund 0xabc...:1000000eth --fund 0xdef...:5000eth`
+    #[arg(long, value_delimiter = ',')]
+    pub fund: Vec<String>,
+
+    /// Override the balance of every dev-prefunded account (20 accounts in dev mode,
+    /// 8 in production mode) with this amount.
+    ///
+    /// Accepts the same suffix format as `--fund`: `1000000eth`, `1e24wei`, or raw wei.
+    /// Applied before `--fund`, so `--fund` entries can still bump specific addresses higher.
+    /// Only applied on first boot — see `--fund` for the wipe caveat.
+    #[arg(long)]
+    pub prefund_all: Option<String>,
+
+    /// Infinite-fund an address via EIP-4895 withdrawals (repeatable).
+    ///
+    /// On every block, the payload builder injects a withdrawal crediting this
+    /// address with `9223372036` gwei (~9.2B ETH) before inner block building.
+    /// Withdrawals are protocol-level balance credits — they create value out
+    /// of thin air, exactly like beacon-chain validator rewards on mainnet.
+    ///
+    /// Unlike `--fund` / `--prefund-all`, this works on a LIVE chain with an
+    /// existing datadir — no wipe required. Take effect starts from the next
+    /// block built after node restart.
+    ///
+    /// Example: `--infinite-fund 0xabc... --infinite-fund 0xdef...`
+    #[arg(long, value_delimiter = ',')]
+    pub infinite_fund: Vec<Address>,
 }

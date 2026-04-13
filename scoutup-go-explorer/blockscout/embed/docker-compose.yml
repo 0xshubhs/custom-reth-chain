@@ -29,17 +29,12 @@ services:
     stop_grace_period: 5m
     container_name: ${BACKEND_CONTAINER_NAME:-backend}
     command: sh -c "bin/blockscout eval \"Elixir.Explorer.ReleaseTasks.create_and_migrate()\" && bin/blockscout start"
-    extra_hosts:
-      - 'host.docker.internal:host-gateway'
+    # Host network so the backend can reach the native chain binary on
+    # 127.0.0.1:8545 without hitting UFW on the docker bridge. Postgres is
+    # reached over the loopback-published port (127.0.0.1:7432).
+    network_mode: host
     env_file:
       -  ./common-blockscout.env
-    links:
-      - db:database
-    # environment:
-    #     ETHEREUM_JSONRPC_WS_URL: ws://host.docker.internal:8545/
-    #     CHAIN_ID: '1337'
-    ports:
-      - "127.0.0.1:${BACKEND_PORT:-4000}:4000"
     volumes:
       - type: bind
         source: ./genesis.json
@@ -53,7 +48,8 @@ services:
     platform: linux/amd64
     restart: always
     container_name: ${FRONTEND_CONTAINER_NAME:-frontend}
+    # Host network so nginx upstream `127.0.0.1:3001` reaches the app
+    # directly and there's no docker bridge between frontend → backend.
+    network_mode: host
     env_file:
       -  ./common-frontend.env
-    ports:
-      - "0.0.0.0:${FRONTEND_PORT:-3001}:3000"

@@ -74,6 +74,25 @@ pub fn print_signer_loaded(addr: &Address) {
     );
 }
 
+/// Print that `--prefund-all` set a uniform balance on every dev account.
+pub fn print_prefund_all(amount: &str) {
+    println!(
+        "  {} Prefund-all applied: every dev account → {}",
+        "OK".green().bold(),
+        amount.cyan()
+    );
+}
+
+/// Print that `--fund` set a specific address balance.
+pub fn print_fund(addr: &Address, amount: &str) {
+    println!(
+        "  {} Funded {} → {}",
+        "OK".green().bold(),
+        addr.to_string().cyan(),
+        amount.cyan()
+    );
+}
+
 /// Print confirmation that dev signers were loaded.
 pub fn print_dev_signers_loaded(count: usize) {
     println!(

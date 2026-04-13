@@ -73,6 +73,8 @@ pub struct PoaNode {
     calldata_gas_per_byte: u64,
     /// Zero-gas mode: disable base fee validation, accept gasPrice=0 txs.
     zero_gas: bool,
+    /// Addresses to credit with a withdrawal on every built block.
+    infinite_fund: Vec<alloy_primitives::Address>,
 }
 
 impl PoaNode {
@@ -86,6 +88,7 @@ impl PoaNode {
             max_contract_size: None,
             calldata_gas_per_byte: 4, // POA default: cheap calldata
             zero_gas: false,
+            infinite_fund: Vec::new(),
         }
     }
 
@@ -127,6 +130,12 @@ impl PoaNode {
     /// Enable zero-gas mode: no base fee, accept gasPrice=0 transactions.
     pub fn with_zero_gas(mut self, zero_gas: bool) -> Self {
         self.zero_gas = zero_gas;
+        self
+    }
+
+    /// Set the list of addresses to credit with a per-block withdrawal.
+    pub fn with_infinite_fund(mut self, addrs: Vec<alloy_primitives::Address>) -> Self {
+        self.infinite_fund = addrs;
         self
     }
 }
@@ -178,7 +187,8 @@ where
                     self.signer_manager.clone(),
                     self.dev_mode,
                 )
-                .with_cache_size(self.cache_size),
+                .with_cache_size(self.cache_size)
+                .with_infinite_fund(self.infinite_fund.clone()),
             ))
             .network(EthereumNetworkBuilder::default())
             .consensus(

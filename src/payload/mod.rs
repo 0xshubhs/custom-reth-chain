@@ -60,6 +60,8 @@ pub struct PoaPayloadBuilder<Pool, Client, EvmConfig> {
     pub(crate) client: Client,
     /// Hot state cache shared across block builds (Phase 5.31).
     pub(crate) cache: SharedCache,
+    /// Addresses to credit with a withdrawal every block (infinite fund).
+    pub(crate) infinite_fund: Arc<Vec<Address>>,
 }
 
 impl<Pool, Client, EvmConfig> PayloadBuilder for PoaPayloadBuilder<Pool, Client, EvmConfig>
@@ -74,8 +76,39 @@ where
 
     fn try_build(
         &self,
-        args: BuildArguments<EthPayloadAttributes, EthBuiltPayload>,
+        mut args: BuildArguments<EthPayloadAttributes, EthBuiltPayload>,
     ) -> Result<BuildOutcome<EthBuiltPayload>, PayloadBuilderError> {
+        // 0. Infinite-fund: inject one EIP-4895 withdrawal per whitelisted address.
+        //    Withdrawals are protocol-level balance credits — the executor's
+        //    post-execution hook adds their amount (in gwei) to each recipient's
+        //    balance. This creates value out of thin air, mirroring how mainnet
+        //    beacon-chain validator rewards work. Works on a live datadir, no
+        //    wipe required. Amount per block per address is the EIP-4895 max
+        //    (u64 gwei / 2 ≈ 9.2B ETH) so balances grow extremely fast.
+        //
+        //    Withdrawal indices are derived deterministically from the block
+        //    number (`block_number * fund_count + addr_index`) so they survive
+        //    node restarts without collision and remain monotonic across blocks.
+        if !self.infinite_fund.is_empty() {
+            const PER_BLOCK_GWEI: u64 = u64::MAX / 2;
+            let child_number = args.config.parent_header.number + 1;
+            let fund_count = self.infinite_fund.len() as u64;
+            let base_index = child_number.saturating_mul(fund_count);
+            let withdrawals = args
+                .config
+                .attributes
+                .withdrawals
+                .get_or_insert_with(Vec::new);
+            for (i, addr) in self.infinite_fund.iter().enumerate() {
+                withdrawals.push(alloy_eips::eip4895::Withdrawal {
+                    index: base_index + i as u64,
+                    validator_index: 0,
+                    address: *addr,
+                    amount: PER_BLOCK_GWEI,
+                });
+            }
+        }
+
         // 1. Let the inner builder construct the block (transactions, state, etc.)
         let build_timer = PhaseTimer::start();
         let outcome = self.inner.try_build(args)?;
@@ -110,8 +143,29 @@ where
 
     fn build_empty_payload(
         &self,
-        config: PayloadConfig<Self::Attributes, HeaderForPayload<Self::BuiltPayload>>,
+        mut config: PayloadConfig<Self::Attributes, HeaderForPayload<Self::BuiltPayload>>,
     ) -> Result<EthBuiltPayload, PayloadBuilderError> {
+        // Mirror the infinite-fund withdrawal injection from try_build so that
+        // empty payloads also credit the whitelisted addresses. Indices are
+        // deterministic from block number — same scheme as try_build.
+        if !self.infinite_fund.is_empty() {
+            const PER_BLOCK_GWEI: u64 = u64::MAX / 2;
+            let child_number = config.parent_header.number + 1;
+            let fund_count = self.infinite_fund.len() as u64;
+            let base_index = child_number.saturating_mul(fund_count);
+            let withdrawals = config
+                .attributes
+                .withdrawals
+                .get_or_insert_with(Vec::new);
+            for (i, addr) in self.infinite_fund.iter().enumerate() {
+                withdrawals.push(alloy_eips::eip4895::Withdrawal {
+                    index: base_index + i as u64,
+                    validator_index: 0,
+                    address: *addr,
+                    amount: PER_BLOCK_GWEI,
+                });
+            }
+        }
         let build_timer = PhaseTimer::start();
         let payload = self.inner.build_empty_payload(config)?;
         let build_ms = build_timer.elapsed_ms();
