@@ -11,12 +11,19 @@ services:
       POSTGRES_PASSWORD: 'ceWb1MeLBEeOIfk65gU8EjF8'
     ports:
       - "127.0.0.1:${POSTGRES_PORT:-7432}:5432"
+    volumes:
+      - blockscout-pgdata:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U blockscout -d blockscout"]
       interval: 10s
       timeout: 5s
       retries: 5
       start_period: 10s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "3"
 
   backend:
     depends_on:
@@ -34,6 +41,11 @@ services:
       - type: bind
         source: ./genesis.json
         target: /app/genesis.json
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "100m"
+        max-file: "3"
 
   frontend:
     depends_on:
@@ -46,3 +58,11 @@ services:
     network_mode: host
     env_file:
       - ./common-frontend.env
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "3"
+
+volumes:
+  blockscout-pgdata:
