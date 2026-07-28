@@ -148,19 +148,32 @@ pub struct Cli {
 
     /// Comma-separated list of HTTP RPC API modules to enable.
     ///
-    /// Available: eth, net, web3, debug, txpool, admin, trace.
-    /// The `meow` namespace is always added automatically.
-    /// `txpool` is enabled by default — Blockscout's indexer and some
-    /// wallet flows rely on `txpool_content` / `txpool_status`.
-    #[arg(long, default_value = "eth,net,web3,txpool")]
+    /// Reth built-ins: eth, net, web3, debug, txpool, admin, trace, rpc, ots,
+    /// reth, miner, mev. This node adds two of its own: `meow` and `clique`.
+    /// Every listed namespace — including the custom ones — is gated on this
+    /// list; nothing is registered implicitly.
+    ///
+    /// `txpool` is needed by Blockscout's pending-transaction view and some
+    /// wallet flows. `debug` and `trace` are what let an explorer index
+    /// INTERNAL transactions — without them any contract deployed by another
+    /// contract is invisible in the explorer and cannot be verified there.
+    /// `ots` (Otterscan) exposes `ots_getInternalOperations`, a single-call way
+    /// to confirm those internal CREATEs are visible. `rpc` exposes
+    /// `rpc_modules` so the enabled set can be audited from outside.
+    ///
+    /// `admin` is deliberately NOT in the default. It exposes node identity,
+    /// listening ports and peer management, none of which belongs on a public
+    /// endpoint.
+    #[arg(long, default_value = "eth,net,web3,txpool,debug,trace,rpc,ots,meow,clique")]
     pub http_api: String,
 
     /// Comma-separated list of WebSocket RPC API modules to enable.
     ///
-    /// Available: eth, net, web3, debug, txpool, admin, trace.
-    /// The `meow` namespace is always added automatically.
-    /// `txpool` is enabled by default — matches the HTTP default.
-    #[arg(long, default_value = "eth,net,web3,txpool")]
+    /// Same namespace set as `--http-api`. `eth` on this transport is what
+    /// provides `eth_subscribe` (newHeads / logs), which is how Blockscout's
+    /// realtime indexer follows the chain tip.
+    /// Matches the HTTP default; `admin` is excluded for the same reason.
+    #[arg(long, default_value = "eth,net,web3,txpool,debug,trace,rpc,ots,meow,clique")]
     pub ws_api: String,
 
     /// Enable structured JSON logging instead of human-readable output.
@@ -198,6 +211,16 @@ pub struct Cli {
     /// Warning: requires significantly more disk space.
     #[arg(long)]
     pub archive: bool,
+
+    /// Gas cap applied to `eth_call`, `eth_estimateGas` and `eth_simulateV1`.
+    ///
+    /// Reth's own default is 50M, which is below this chain's block gas limit
+    /// (300M dev / 1B production). A call that deploys further contracts via
+    /// internal CREATE can exceed 50M, and the estimate would then be rejected
+    /// for a transaction the chain executes fine.
+    /// Set to 0 (default) to follow the genesis block gas limit.
+    #[arg(long, default_value = "0")]
+    pub rpc_gas_cap: u64,
 
     /// Gas price oracle: number of recent blocks to sample for gas estimation.
     ///

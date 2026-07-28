@@ -28,11 +28,40 @@ use reth_ethereum::{
     tasks::{RuntimeBuilder, RuntimeConfig, TokioConfig},
 };
 use reth_network_peers::TrustedPeer;
+use reth_rpc_server_types::{RethRpcModule, RpcModuleSelection};
 use std::{
     net::{IpAddr, Ipv4Addr, SocketAddr},
     sync::Arc,
     time::{Duration, Instant},
 };
+
+/// RPC namespaces this node installs itself, on top of Reth's built-ins.
+///
+/// Reth has no idea these exist, so they parse as `RethRpcModule::Other` and
+/// have to be whitelisted here — see [`validate_rpc_modules`].
+const CUSTOM_RPC_NAMESPACES: [&str; 2] = ["meow", "clique"];
+
+/// Reject RPC module names Reth does not know and we do not add.
+///
+/// `RethRpcModule::from_str` never fails: an unrecognised name becomes
+/// `Other(name)`, which registers zero methods and logs nothing. So
+/// `--http-api eth,net,web3,dbeug` starts happily and serves no `debug_*` at
+/// all. That failure mode is exactly how this node ended up without tracing
+/// while its launch command looked correct, so unknown names are fatal.
+fn validate_rpc_modules(flag: &str, selection: &RpcModuleSelection) -> eyre::Result<()> {
+    for module in selection.iter_selection() {
+        if let RethRpcModule::Other(name) = &module {
+            if !CUSTOM_RPC_NAMESPACES.contains(&name.as_str()) {
+                return Err(eyre::eyre!(
+                    "unknown RPC module {name:?} in {flag}; known modules are \
+                     admin, debug, eth, net, trace, txpool, web3, rpc, reth, ots, \
+                     miner, mev, plus this node's {CUSTOM_RPC_NAMESPACES:?}"
+                ));
+            }
+        }
+    }
+    Ok(())
+}
 
 /// Parse a balance string into a U256 amount in wei.
 ///
@@ -232,6 +261,18 @@ async fn main() -> eyre::Result<()> {
         rpc_max_connections: cli.rpc_max_connections.into(),
         rpc_max_request_size: cli.rpc_max_request_size.into(),
         rpc_max_response_size: cli.rpc_max_response_size.into(),
+        // Reth caps eth_call / eth_estimateGas / eth_simulateV1 at 50M gas, well
+        // under this chain's block gas limit. Follow the block gas limit instead
+        // so an estimate can never reject a transaction the chain would execute.
+        rpc_gas_cap: if cli.rpc_gas_cap > 0 {
+            cli.rpc_gas_cap
+        } else {
+            chain_spec_arc.inner().genesis().gas_limit
+        },
+        // Reth's IPC default is the fixed path /tmp/reth.ipc, and IPC serves
+        // *every* namespace regardless of --http-api. Two chains on one host
+        // fight over that path; scope the socket to the datadir instead.
+        ipcpath: cli.datadir.join("reth.ipc").to_string_lossy().into_owned(),
         // Wire gas price oracle configuration from CLI flags
         gas_price_oracle: GasPriceOracleArgs {
             blocks: cli.gpo_blocks,
@@ -251,17 +292,42 @@ async fn main() -> eyre::Result<()> {
     // via the CLI. We set the http_api and ws_api fields which accept Option<RpcModuleSelection>.
     // These are the standard Reth modules; the `meow_*` namespace is added separately
     // via `extend_rpc_modules` below.
-    if let Ok(selection) = cli
+    //
+    // A parse failure is fatal rather than ignored. Silently falling back to
+    // Reth's defaults on a typo is how a node ends up serving a module set
+    // nobody chose — including `admin` on a public endpoint.
+    let http_api = cli
         .http_api
-        .parse::<reth_rpc_server_types::RpcModuleSelection>()
-    {
-        rpc_args.http_api = Some(selection);
-    }
-    if let Ok(selection) = cli
+        .parse::<RpcModuleSelection>()
+        .map_err(|e| eyre::eyre!("invalid --http-api {:?}: {e}", cli.http_api))?;
+    validate_rpc_modules("--http-api", &http_api)?;
+    rpc_args.http_api = Some(http_api);
+
+    let ws_api = cli
         .ws_api
-        .parse::<reth_rpc_server_types::RpcModuleSelection>()
-    {
-        rpc_args.ws_api = Some(selection);
+        .parse::<RpcModuleSelection>()
+        .map_err(|e| eyre::eyre!("invalid --ws-api {:?}: {e}", cli.ws_api))?;
+    validate_rpc_modules("--ws-api", &ws_api)?;
+    rpc_args.ws_api = Some(ws_api);
+
+    // `admin` lets a caller read node identity and listening ports and manage
+    // peers. Warn loudly if it has been switched on for a listener that is not
+    // loopback — it is almost always a mistake on a chain with a public RPC.
+    for (label, api, addr) in [
+        ("--http-api", &cli.http_api, &cli.http_addr),
+        ("--ws-api", &cli.ws_api, &cli.ws_addr),
+    ] {
+        let enables_admin = api
+            .split(',')
+            .any(|m| matches!(m.trim(), "admin" | "all"));
+        let loopback = addr == "127.0.0.1" || addr == "::1" || addr == "localhost";
+        if enables_admin && !loopback {
+            output::print_info(&format!(
+                "WARNING: {label} enables `admin` on {addr}, which is not loopback. \
+                 admin_nodeInfo leaks node identity and listening ports, and \
+                 admin_addPeer accepts peers from anyone who can reach the endpoint."
+            ));
+        }
     }
 
     // Configure P2P network (bootnodes, port, discovery)
@@ -301,7 +367,18 @@ async fn main() -> eyre::Result<()> {
         // which results in no pruning config (= archive behaviour).
         PruningArgs::default()
     } else {
-        // "full" mode prunes old state to save disk space.
+        // "full" mode prunes old state to save disk space. Say so loudly: the
+        // window is 10064 blocks, which at this chain's block time is hours,
+        // not months, and past it receipts and account/storage history are
+        // gone. Everything an explorer needs for a historical block —
+        // eth_getTransactionReceipt, debug_traceTransaction, eth_getBalance —
+        // starts failing at that point with no other symptom.
+        output::print_info(
+            "WARNING: state pruning is ON (--archive not set). Receipts and \
+             account/storage history older than 10064 blocks are deleted, which \
+             silently breaks receipt lookups, tracing and historical balances \
+             for an explorer. Use --archive for any node backing Blockscout.",
+        );
         PruningArgs {
             full: true,
             ..Default::default()
@@ -376,27 +453,44 @@ async fn main() -> eyre::Result<()> {
                 .with_infinite_fund(cli.infinite_fund.clone()),
         )
         .extend_rpc_modules(move |ctx| {
-            let meow_rpc = MeowRpc::new(rpc_chain_spec.clone(), rpc_signer_manager.clone(), is_dev_mode);
-            ctx.modules.merge_configured(meow_rpc.into_rpc())?;
-            output::print_rpc_registered("meow_*");
+            // `merge_configured` installs methods on http, ws AND ipc unconditionally,
+            // ignoring --http-api / --ws-api entirely. That is how this node served
+            // `admin_*` on a public endpoint that never listed `admin`.
+            // `merge_if_module_configured` honours the per-transport selection, so the
+            // module list is finally the single source of truth for what is reachable.
+            let meow = RethRpcModule::Other("meow".to_string());
+            if ctx.modules.module_config().contains_any(&meow) {
+                let meow_rpc =
+                    MeowRpc::new(rpc_chain_spec.clone(), rpc_signer_manager.clone(), is_dev_mode);
+                ctx.modules.merge_if_module_configured(meow, meow_rpc.into_rpc())?;
+                output::print_rpc_registered("meow_*");
+            }
 
-            let clique_rpc = CliqueRpc::new(rpc_chain_spec.clone(), rpc_signer_manager.clone());
-            ctx.modules.merge_configured(clique_rpc.into_rpc())?;
-            output::print_rpc_registered("clique_*");
+            let clique = RethRpcModule::Other("clique".to_string());
+            if ctx.modules.module_config().contains_any(&clique) {
+                let clique_rpc = CliqueRpc::new(rpc_chain_spec.clone(), rpc_signer_manager.clone());
+                ctx.modules.merge_if_module_configured(clique, clique_rpc.into_rpc())?;
+                output::print_rpc_registered("clique_*");
+            }
 
-            let admin_rpc = AdminRpc::new(
-                rpc_chain_spec.clone(),
-                rpc_signer_manager.clone(),
-                node_start_time,
-                is_dev_mode,
-                p2p_port,
-            );
-            // Reth provides built-in admin_* methods (nodeInfo, peers, addPeer, removePeer).
-            // Our AdminRpc adds admin_health for load balancers. If Reth's admin_* conflicts,
-            // skip gracefully — the built-in admin namespace is already available.
-            match ctx.modules.merge_configured(admin_rpc.into_rpc()) {
-                Ok(()) => output::print_rpc_registered("admin_*"),
-                Err(_) => output::print_rpc_registered("admin_* (using Reth built-in)"),
+            if ctx.modules.module_config().contains_any(&RethRpcModule::Admin) {
+                let admin_rpc = AdminRpc::new(
+                    rpc_chain_spec.clone(),
+                    rpc_signer_manager.clone(),
+                    node_start_time,
+                    is_dev_mode,
+                    p2p_port,
+                );
+                // Reth provides built-in admin_* methods (nodeInfo, peers, addPeer, removePeer).
+                // Our AdminRpc adds admin_health for load balancers. If Reth's admin_* conflicts,
+                // skip gracefully — the built-in admin namespace is already available.
+                match ctx
+                    .modules
+                    .merge_if_module_configured(RethRpcModule::Admin, admin_rpc.into_rpc())
+                {
+                    Ok(()) => output::print_rpc_registered("admin_*"),
+                    Err(_) => output::print_rpc_registered("admin_* (using Reth built-in)"),
+                }
             }
             Ok(())
         })
@@ -428,6 +522,14 @@ async fn main() -> eyre::Result<()> {
     output::print_info(&format!(
         "Gas price oracle: {} blocks, {}th percentile",
         cli.gpo_blocks, cli.gpo_percentile,
+    ));
+    output::print_info(&format!(
+        "eth_call/eth_estimateGas gas cap: {}",
+        if cli.rpc_gas_cap > 0 {
+            cli.rpc_gas_cap
+        } else {
+            chain_spec_arc.inner().genesis().gas_limit
+        },
     ));
     if cli.zero_gas {
         output::print_feature("Zero-gas mode", "base fee disabled, gasPrice=0 accepted");
