@@ -784,7 +784,10 @@ mod tests {
             max_tx_gas: 30_000_000,
             eager_mining: false,
         };
-        let b = a.clone();
+        // Copy, not Clone — the point of the assertion is that duplicating the
+        // config yields an equal value, and clippy rejects `.clone()` on a Copy
+        // type under -D warnings.
+        let b = a;
         assert_eq!(a, b);
     }
 
