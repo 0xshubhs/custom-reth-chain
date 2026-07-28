@@ -24,7 +24,7 @@ pub mod chain_config_slots {
 ///
 /// Matches `contracts/SignerRegistry.sol` and `genesis.rs:governance_contract_alloc`.
 pub mod signer_registry_slots {
-    use alloy_primitives::{U256, B256, b256};
+    use alloy_primitives::{b256, B256, U256};
 
     /// slot 0: governance (address)
     pub const GOVERNANCE: U256 = U256::from_limbs([0, 0, 0, 0]);

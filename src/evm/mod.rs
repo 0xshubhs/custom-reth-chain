@@ -50,7 +50,6 @@ use reth_ethereum::node::EthEvmConfig;
 use reth_ethereum::EthPrimitives;
 use reth_ethereum_forks::Hardforks;
 
-
 // ─── Calldata gas discount inspector ──────────────────────────────────────────
 
 /// Inspector wrapper that grants a calldata gas discount at the start of each
@@ -309,7 +308,11 @@ impl EvmFactory for PoaEvmFactory {
         input: EvmEnv<Self::Spec, Self::BlockEnv>,
     ) -> Self::Evm<DB, NoOpInspector> {
         // Skip patch_env entirely when no CfgEnv overrides are active.
-        let env = if self.needs_env_patch { self.patch_env(input) } else { input };
+        let env = if self.needs_env_patch {
+            self.patch_env(input)
+        } else {
+            input
+        };
         self.inner.create_evm(db, env)
     }
 
@@ -319,7 +322,11 @@ impl EvmFactory for PoaEvmFactory {
         input: EvmEnv<Self::Spec, Self::BlockEnv>,
         inspector: I,
     ) -> Self::Evm<DB, I> {
-        let env = if self.needs_env_patch { self.patch_env(input) } else { input };
+        let env = if self.needs_env_patch {
+            self.patch_env(input)
+        } else {
+            input
+        };
         self.inner.create_evm_with_inspector(db, env, inspector)
     }
 }
@@ -343,7 +350,11 @@ pub struct PoaExecutorBuilder {
 
 impl PoaExecutorBuilder {
     /// Create a builder with the given POA EVM settings.
-    pub fn new(max_contract_size: Option<usize>, calldata_gas_per_byte: u64, zero_gas: bool) -> Self {
+    pub fn new(
+        max_contract_size: Option<usize>,
+        calldata_gas_per_byte: u64,
+        zero_gas: bool,
+    ) -> Self {
         Self {
             max_contract_size,
             calldata_gas_per_byte,
@@ -366,7 +377,11 @@ where
     async fn build_evm(self, ctx: &BuilderContext<Node>) -> eyre::Result<Self::EVM> {
         Ok(EthEvmConfig::new_with_evm_factory(
             ctx.chain_spec(),
-            PoaEvmFactory::new(self.max_contract_size, self.calldata_gas_per_byte, self.zero_gas),
+            PoaEvmFactory::new(
+                self.max_contract_size,
+                self.calldata_gas_per_byte,
+                self.zero_gas,
+            ),
         ))
     }
 }

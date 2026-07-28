@@ -71,10 +71,8 @@ where
         + 'static,
     Evm: ConfigureEvm<Primitives = PrimitivesTy<Types>, NextBlockEnvCtx = NextBlockEnvAttributes>
         + 'static,
-    Types::Payload: PayloadTypes<
-        BuiltPayload = EthBuiltPayload,
-        PayloadAttributes = EthPayloadAttributes,
-    >,
+    Types::Payload:
+        PayloadTypes<BuiltPayload = EthBuiltPayload, PayloadAttributes = EthPayloadAttributes>,
 {
     type PayloadBuilder = PoaPayloadBuilder<Pool, Node::Provider, Evm>;
 

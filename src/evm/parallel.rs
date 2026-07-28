@@ -166,7 +166,11 @@ impl ParallelSchedule {
         let num_batches = batch_of.iter().copied().max().map_or(0, |m| m + 1);
         // Pre-size each inner batch Vec to `records.len() / num_batches` so the
         // push loop below avoids repeated reallocations in the common case.
-        let avg_cap = if num_batches > 0 { records.len() / num_batches } else { 0 };
+        let avg_cap = if num_batches > 0 {
+            records.len() / num_batches
+        } else {
+            0
+        };
         let mut batches: Vec<Vec<usize>> = (0..num_batches)
             .map(|_| Vec::with_capacity(avg_cap.max(1)))
             .collect();
@@ -230,7 +234,8 @@ impl ParallelExecutor {
     pub fn record_access(&mut self, tx_idx: usize, record: TxAccessRecord) {
         // Pad with defaults if there's a gap
         if tx_idx >= self.records.len() {
-            self.records.resize_with(tx_idx + 1, TxAccessRecord::default);
+            self.records
+                .resize_with(tx_idx + 1, TxAccessRecord::default);
         }
         self.records[tx_idx] = record;
     }

@@ -101,7 +101,7 @@ impl GenesisConfig {
         let signers = accounts[..5].to_vec();
 
         let eth = U256::from(10u64).pow(U256::from(18u64)); // 1 ETH in wei
-        // Treasury: 2,500,000 ETH - ecosystem development fund
+                                                            // Treasury: 2,500,000 ETH - ecosystem development fund
         let treasury_balance = U256::from(2_500_000u64) * eth;
         // Operations: 500,000 ETH - infrastructure and running costs
         let operations_balance = U256::from(500_000u64) * eth;
@@ -192,7 +192,15 @@ pub fn create_genesis(config: GenesisConfig) -> Genesis {
     let mut alloc: BTreeMap<Address, GenesisAccount> = config
         .prefunded_accounts
         .into_iter()
-        .map(|(addr, balance)| (addr, GenesisAccount { balance, ..Default::default() }))
+        .map(|(addr, balance)| {
+            (
+                addr,
+                GenesisAccount {
+                    balance,
+                    ..Default::default()
+                },
+            )
+        })
         .collect();
 
     // Add system contracts required by Cancun/Prague hardforks

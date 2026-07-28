@@ -49,7 +49,10 @@ impl SignerManager {
 
     pub fn first_signer_in(&self, authorized: &[Address]) -> Option<Address> {
         let signers = self.signers.read().unwrap();
-        authorized.iter().find(|a| signers.contains_key(*a)).copied()
+        authorized
+            .iter()
+            .find(|a| signers.contains_key(*a))
+            .copied()
     }
 
     /// The only async method: alloy's `Signer` trait requires `.await` for sign_hash.

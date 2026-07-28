@@ -26,7 +26,8 @@ mod tests {
         let manager = SignerManager::new();
 
         let address = manager
-            .add_signer_from_hex(dev::DEV_PRIVATE_KEYS[0]).unwrap();
+            .add_signer_from_hex(dev::DEV_PRIVATE_KEYS[0])
+            .unwrap();
 
         assert!(manager.has_signer(&address));
         assert_eq!(manager.signer_addresses().len(), 1);
@@ -36,7 +37,8 @@ mod tests {
     async fn test_sign_and_verify() {
         let manager = Arc::new(SignerManager::new());
         let address = manager
-            .add_signer_from_hex(dev::DEV_PRIVATE_KEYS[0]).unwrap();
+            .add_signer_from_hex(dev::DEV_PRIVATE_KEYS[0])
+            .unwrap();
 
         let sealer = BlockSealer::new(manager);
 
@@ -68,7 +70,8 @@ mod tests {
     async fn test_remove_signer() {
         let manager = SignerManager::new();
         let address = manager
-            .add_signer_from_hex(dev::DEV_PRIVATE_KEYS[0]).unwrap();
+            .add_signer_from_hex(dev::DEV_PRIVATE_KEYS[0])
+            .unwrap();
 
         assert!(manager.has_signer(&address));
         assert!(manager.remove_signer(&address));
@@ -97,11 +100,14 @@ mod tests {
         let manager = SignerManager::new();
 
         let addr1 = manager
-            .add_signer_from_hex(dev::DEV_PRIVATE_KEYS[0]).unwrap();
+            .add_signer_from_hex(dev::DEV_PRIVATE_KEYS[0])
+            .unwrap();
         let addr2 = manager
-            .add_signer_from_hex(dev::DEV_PRIVATE_KEYS[1]).unwrap();
+            .add_signer_from_hex(dev::DEV_PRIVATE_KEYS[1])
+            .unwrap();
         let addr3 = manager
-            .add_signer_from_hex(dev::DEV_PRIVATE_KEYS[2]).unwrap();
+            .add_signer_from_hex(dev::DEV_PRIVATE_KEYS[2])
+            .unwrap();
 
         assert_ne!(addr1, addr2);
         assert_ne!(addr2, addr3);
@@ -126,9 +132,11 @@ mod tests {
     async fn test_seal_header_different_signers_produce_different_signatures() {
         let manager = Arc::new(SignerManager::new());
         let addr1 = manager
-            .add_signer_from_hex(dev::DEV_PRIVATE_KEYS[0]).unwrap();
+            .add_signer_from_hex(dev::DEV_PRIVATE_KEYS[0])
+            .unwrap();
         let addr2 = manager
-            .add_signer_from_hex(dev::DEV_PRIVATE_KEYS[1]).unwrap();
+            .add_signer_from_hex(dev::DEV_PRIVATE_KEYS[1])
+            .unwrap();
 
         let sealer = BlockSealer::new(manager);
 
@@ -201,7 +209,8 @@ mod tests {
     async fn test_concurrent_sign_operations() {
         let manager = Arc::new(SignerManager::new());
         let address = manager
-            .add_signer_from_hex(dev::DEV_PRIVATE_KEYS[0]).unwrap();
+            .add_signer_from_hex(dev::DEV_PRIVATE_KEYS[0])
+            .unwrap();
 
         let mut handles = vec![];
         for i in 0..10u64 {
@@ -317,14 +326,16 @@ mod tests {
     async fn test_remove_and_re_add_signer() {
         let manager = SignerManager::new();
         let address = manager
-            .add_signer_from_hex(dev::DEV_PRIVATE_KEYS[0]).unwrap();
+            .add_signer_from_hex(dev::DEV_PRIVATE_KEYS[0])
+            .unwrap();
 
         assert!(manager.has_signer(&address));
         assert!(manager.remove_signer(&address));
         assert!(!manager.has_signer(&address));
 
         let re_added = manager
-            .add_signer_from_hex(dev::DEV_PRIVATE_KEYS[0]).unwrap();
+            .add_signer_from_hex(dev::DEV_PRIVATE_KEYS[0])
+            .unwrap();
         assert_eq!(address, re_added);
         assert!(manager.has_signer(&address));
     }
@@ -333,7 +344,8 @@ mod tests {
     async fn test_sign_after_remove_fails() {
         let manager = SignerManager::new();
         let address = manager
-            .add_signer_from_hex(dev::DEV_PRIVATE_KEYS[0]).unwrap();
+            .add_signer_from_hex(dev::DEV_PRIVATE_KEYS[0])
+            .unwrap();
 
         let hash = B256::ZERO;
         assert!(manager.sign_hash(&address, hash).await.is_ok());

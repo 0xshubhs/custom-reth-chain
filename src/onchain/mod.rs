@@ -121,17 +121,35 @@ mod tests {
     /// This guards against copy-paste errors in the hardcoded byte arrays.
     #[test]
     fn test_const_selectors_match_runtime_keccak() {
-        assert_eq!(selectors::gas_limit(),            function_selector("gasLimit()"));
-        assert_eq!(selectors::block_time(),           function_selector("blockTime()"));
-        assert_eq!(selectors::max_contract_size(),    function_selector("maxContractSize()"));
-        assert_eq!(selectors::calldata_gas_per_byte(),function_selector("calldataGasPerByte()"));
-        assert_eq!(selectors::max_tx_gas(),           function_selector("maxTxGas()"));
-        assert_eq!(selectors::eager_mining(),         function_selector("eagerMining()"));
-        assert_eq!(selectors::governance(),           function_selector("governance()"));
-        assert_eq!(selectors::get_signers(),          function_selector("getSigners()"));
-        assert_eq!(selectors::signer_count(),         function_selector("signerCount()"));
-        assert_eq!(selectors::signer_threshold(),     function_selector("signerThreshold()"));
-        assert_eq!(selectors::is_signer(),            function_selector("isSigner(address)"));
+        assert_eq!(selectors::gas_limit(), function_selector("gasLimit()"));
+        assert_eq!(selectors::block_time(), function_selector("blockTime()"));
+        assert_eq!(
+            selectors::max_contract_size(),
+            function_selector("maxContractSize()")
+        );
+        assert_eq!(
+            selectors::calldata_gas_per_byte(),
+            function_selector("calldataGasPerByte()")
+        );
+        assert_eq!(selectors::max_tx_gas(), function_selector("maxTxGas()"));
+        assert_eq!(
+            selectors::eager_mining(),
+            function_selector("eagerMining()")
+        );
+        assert_eq!(selectors::governance(), function_selector("governance()"));
+        assert_eq!(selectors::get_signers(), function_selector("getSigners()"));
+        assert_eq!(
+            selectors::signer_count(),
+            function_selector("signerCount()")
+        );
+        assert_eq!(
+            selectors::signer_threshold(),
+            function_selector("signerThreshold()")
+        );
+        assert_eq!(
+            selectors::is_signer(),
+            function_selector("isSigner(address)")
+        );
     }
 
     #[test]

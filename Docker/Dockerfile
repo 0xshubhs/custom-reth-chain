@@ -2,9 +2,15 @@
 FROM rust:slim-bookworm AS builder
 
 # Install build dependencies
+# clang/libclang are required by bindgen, which reth's libmdbx-sys build script
+# runs to generate the MDBX bindings. Without them the build fails deep in a
+# dependency with "Unable to find libclang", which reads like a Rust problem and
+# is actually a missing apt package.
 RUN apt-get update && apt-get install -y \
     pkg-config \
     libssl-dev \
+    clang \
+    libclang-dev \
     git \
     && rm -rf /var/lib/apt/lists/*
 

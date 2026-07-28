@@ -153,10 +153,7 @@ where
             let child_number = config.parent_header.number + 1;
             let fund_count = self.infinite_fund.len() as u64;
             let base_index = child_number.saturating_mul(fund_count);
-            let withdrawals = config
-                .attributes
-                .withdrawals
-                .get_or_insert_with(Vec::new);
+            let withdrawals = config.attributes.withdrawals.get_or_insert_with(Vec::new);
             for (i, addr) in self.infinite_fund.iter().enumerate() {
                 withdrawals.push(alloy_eips::eip4895::Withdrawal {
                     index: base_index + i as u64,

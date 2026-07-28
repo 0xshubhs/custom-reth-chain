@@ -164,7 +164,10 @@ pub struct Cli {
     /// `admin` is deliberately NOT in the default. It exposes node identity,
     /// listening ports and peer management, none of which belongs on a public
     /// endpoint.
-    #[arg(long, default_value = "eth,net,web3,txpool,debug,trace,rpc,ots,meow,clique")]
+    #[arg(
+        long,
+        default_value = "eth,net,web3,txpool,debug,trace,rpc,ots,meow,clique"
+    )]
     pub http_api: String,
 
     /// Comma-separated list of WebSocket RPC API modules to enable.
@@ -173,7 +176,10 @@ pub struct Cli {
     /// provides `eth_subscribe` (newHeads / logs), which is how Blockscout's
     /// realtime indexer follows the chain tip.
     /// Matches the HTTP default; `admin` is excluded for the same reason.
-    #[arg(long, default_value = "eth,net,web3,txpool,debug,trace,rpc,ots,meow,clique")]
+    #[arg(
+        long,
+        default_value = "eth,net,web3,txpool,debug,trace,rpc,ots,meow,clique"
+    )]
     pub ws_api: String,
 
     /// Enable structured JSON logging instead of human-readable output.

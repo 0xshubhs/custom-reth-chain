@@ -77,7 +77,6 @@ mod tests {
             self.code = Some(code);
             self
         }
-
     }
 
     /// Minimal error type for the benchmark DB.
@@ -1079,5 +1078,4 @@ mod tests {
             "large set check too slow: {per_check_large_ns} ns"
         );
     }
-
 }

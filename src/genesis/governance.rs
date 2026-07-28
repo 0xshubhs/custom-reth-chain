@@ -61,13 +61,13 @@ pub(crate) fn governance_contract_alloc(
     {
         let gas_limit_b256 = u64_to_b256(gas_limit);
         let mut storage = BTreeMap::new();
-        storage.insert(B256::ZERO, gov_b256);          // slot 0: governance
-        storage.insert(SLOT1, gas_limit_b256);          // slot 1: gasLimit
+        storage.insert(B256::ZERO, gov_b256); // slot 0: governance
+        storage.insert(SLOT1, gas_limit_b256); // slot 1: gasLimit
         storage.insert(SLOT2, u64_to_b256(block_time)); // slot 2: blockTime
-        storage.insert(SLOT3, u64_to_b256(24576));      // slot 3: maxContractSize = 24576
-        storage.insert(SLOT4, u64_to_b256(16));         // slot 4: calldataGasPerByte = 16
-        storage.insert(SLOT5, gas_limit_b256);          // slot 5: maxTxGas = gasLimit
-        // slot 6: eagerMining = false (0) — default, no need to set
+        storage.insert(SLOT3, u64_to_b256(24576)); // slot 3: maxContractSize = 24576
+        storage.insert(SLOT4, u64_to_b256(16)); // slot 4: calldataGasPerByte = 16
+        storage.insert(SLOT5, gas_limit_b256); // slot 5: maxTxGas = gasLimit
+                                               // slot 6: eagerMining = false (0) — default, no need to set
 
         contracts.insert(
             CHAIN_CONFIG_ADDRESS,
@@ -148,11 +148,11 @@ pub(crate) fn governance_contract_alloc(
     {
         let accounts = dev_accounts();
         let mut storage = BTreeMap::new();
-        storage.insert(B256::ZERO, gov_b256);          // slot 0: governance
-        storage.insert(SLOT1, u64_to_b256(4000));       // slot 1: signerShare = 4000
-        storage.insert(SLOT2, u64_to_b256(3000));       // slot 2: devShare = 3000
-        storage.insert(SLOT3, u64_to_b256(2000));       // slot 3: communityShare = 2000
-        storage.insert(SLOT4, u64_to_b256(1000));       // slot 4: burnShare = 1000
+        storage.insert(B256::ZERO, gov_b256); // slot 0: governance
+        storage.insert(SLOT1, u64_to_b256(4000)); // slot 1: signerShare = 4000
+        storage.insert(SLOT2, u64_to_b256(3000)); // slot 2: devShare = 3000
+        storage.insert(SLOT3, u64_to_b256(2000)); // slot 3: communityShare = 2000
+        storage.insert(SLOT4, u64_to_b256(1000)); // slot 4: burnShare = 1000
         storage.insert(SLOT5, addr_to_b256(accounts[5])); // slot 5: devFund
         storage.insert(SLOT6, addr_to_b256(accounts[7])); // slot 6: communityFund
         storage.insert(SLOT7, addr_to_b256(SIGNER_REGISTRY_ADDRESS)); // slot 7: signerRegistry
@@ -183,10 +183,10 @@ pub(crate) fn governance_contract_alloc(
     {
         let mut storage = BTreeMap::new();
         storage.insert(B256::ZERO, u64_to_b256(86400)); // slot 0: minDelay = 86400 (24 hours)
-        storage.insert(SLOT1, gov_b256);                 // slot 1: proposer = governance
-        storage.insert(SLOT2, gov_b256);                 // slot 2: executor = governance
-        storage.insert(SLOT3, gov_b256);                 // slot 3: admin = governance
-        // slot 4: paused = false (0) — default, no need to set
+        storage.insert(SLOT1, gov_b256); // slot 1: proposer = governance
+        storage.insert(SLOT2, gov_b256); // slot 2: executor = governance
+        storage.insert(SLOT3, gov_b256); // slot 3: admin = governance
+                                         // slot 4: paused = false (0) — default, no need to set
 
         contracts.insert(
             TIMELOCK_ADDRESS,

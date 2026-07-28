@@ -20,7 +20,9 @@ pub const DEV_PRIVATE_KEYS: &[&str] = &[
 pub fn setup_dev_signers_sync() -> Arc<SignerManager> {
     let manager = Arc::new(SignerManager::new());
     for key in DEV_PRIVATE_KEYS.iter().take(3) {
-        manager.add_signer_from_hex(key).expect("Dev keys should be valid");
+        manager
+            .add_signer_from_hex(key)
+            .expect("Dev keys should be valid");
     }
     manager
 }
@@ -31,5 +33,7 @@ pub async fn setup_dev_signers() -> Arc<SignerManager> {
 }
 
 pub fn first_dev_signer() -> PrivateKeySigner {
-    DEV_PRIVATE_KEYS[0].parse().expect("First dev key should be valid")
+    DEV_PRIVATE_KEYS[0]
+        .parse()
+        .expect("First dev key should be valid")
 }

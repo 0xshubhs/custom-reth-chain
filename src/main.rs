@@ -71,7 +71,10 @@ fn validate_rpc_modules(flag: &str, selection: &RpcModuleSelection) -> eyre::Res
 fn parse_balance(s: &str) -> eyre::Result<U256> {
     let trimmed = s.trim().to_lowercase();
     let (num_str, multiplier) = if let Some(stripped) = trimmed.strip_suffix("eth") {
-        (stripped.trim().to_string(), U256::from(10u64).pow(U256::from(18u64)))
+        (
+            stripped.trim().to_string(),
+            U256::from(10u64).pow(U256::from(18u64)),
+        )
     } else if let Some(stripped) = trimmed.strip_suffix("wei") {
         (stripped.trim().to_string(), U256::from(1u64))
     } else {
@@ -80,7 +83,9 @@ fn parse_balance(s: &str) -> eyre::Result<U256> {
 
     // Expand scientific notation like "1e25" → "10000...0"
     let expanded = if let Some((mantissa, exp)) = num_str.split_once('e') {
-        let exp: u32 = exp.parse().map_err(|_| eyre::eyre!("bad exponent in balance: {s}"))?;
+        let exp: u32 = exp
+            .parse()
+            .map_err(|_| eyre::eyre!("bad exponent in balance: {s}"))?;
         let mantissa_parts: Vec<&str> = mantissa.split('.').collect();
         let (int_part, frac_part) = match mantissa_parts.as_slice() {
             [i] => (*i, ""),
@@ -97,8 +102,8 @@ fn parse_balance(s: &str) -> eyre::Result<U256> {
         num_str
     };
 
-    let base = U256::from_str_radix(&expanded, 10)
-        .map_err(|e| eyre::eyre!("bad balance '{s}': {e}"))?;
+    let base =
+        U256::from_str_radix(&expanded, 10).map_err(|e| eyre::eyre!("bad balance '{s}': {e}"))?;
     Ok(base * multiplier)
 }
 
@@ -317,9 +322,7 @@ async fn main() -> eyre::Result<()> {
         ("--http-api", &cli.http_api, &cli.http_addr),
         ("--ws-api", &cli.ws_api, &cli.ws_addr),
     ] {
-        let enables_admin = api
-            .split(',')
-            .any(|m| matches!(m.trim(), "admin" | "all"));
+        let enables_admin = api.split(',').any(|m| matches!(m.trim(), "admin" | "all"));
         let loopback = addr == "127.0.0.1" || addr == "::1" || addr == "localhost";
         if enables_admin && !loopback {
             output::print_info(&format!(
@@ -460,20 +463,29 @@ async fn main() -> eyre::Result<()> {
             // module list is finally the single source of truth for what is reachable.
             let meow = RethRpcModule::Other("meow".to_string());
             if ctx.modules.module_config().contains_any(&meow) {
-                let meow_rpc =
-                    MeowRpc::new(rpc_chain_spec.clone(), rpc_signer_manager.clone(), is_dev_mode);
-                ctx.modules.merge_if_module_configured(meow, meow_rpc.into_rpc())?;
+                let meow_rpc = MeowRpc::new(
+                    rpc_chain_spec.clone(),
+                    rpc_signer_manager.clone(),
+                    is_dev_mode,
+                );
+                ctx.modules
+                    .merge_if_module_configured(meow, meow_rpc.into_rpc())?;
                 output::print_rpc_registered("meow_*");
             }
 
             let clique = RethRpcModule::Other("clique".to_string());
             if ctx.modules.module_config().contains_any(&clique) {
                 let clique_rpc = CliqueRpc::new(rpc_chain_spec.clone(), rpc_signer_manager.clone());
-                ctx.modules.merge_if_module_configured(clique, clique_rpc.into_rpc())?;
+                ctx.modules
+                    .merge_if_module_configured(clique, clique_rpc.into_rpc())?;
                 output::print_rpc_registered("clique_*");
             }
 
-            if ctx.modules.module_config().contains_any(&RethRpcModule::Admin) {
+            if ctx
+                .modules
+                .module_config()
+                .contains_any(&RethRpcModule::Admin)
+            {
                 let admin_rpc = AdminRpc::new(
                     rpc_chain_spec.clone(),
                     rpc_signer_manager.clone(),
@@ -647,7 +659,10 @@ async fn main() -> eyre::Result<()> {
                     }
                 }
                 let state_diff = diff_builder.build();
-                (state_diff.touched_account_count(), state_diff.total_storage_changes())
+                (
+                    state_diff.touched_account_count(),
+                    state_diff.total_storage_changes(),
+                )
             } else {
                 (0, 0)
             };
@@ -659,8 +674,7 @@ async fn main() -> eyre::Result<()> {
             // the async call sees the live governance list, not just the genesis list.
             // The clone is cheap: ≤21 signers × 20 bytes = ≤420 bytes.
             let effective = monitoring_chain_spec.effective_signers();
-            let our_signer = monitoring_signer_manager
-                .first_signer_in(&effective);
+            let our_signer = monitoring_signer_manager.first_signer_in(&effective);
             let in_turn = our_signer == Some(expected_signer);
 
             // Check if we have the key for the expected signer

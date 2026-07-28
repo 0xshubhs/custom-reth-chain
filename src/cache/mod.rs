@@ -503,7 +503,6 @@ mod tests {
         assert_eq!(cache.get(addr(4), slot(0)), Some(val(4)));
     }
 
-
     #[test]
     fn test_cache_invalidate_address() {
         let mut cache = HotStateCache::new(10);
