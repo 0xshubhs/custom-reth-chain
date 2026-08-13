@@ -164,7 +164,7 @@ async fn main() -> eyre::Result<()> {
             epoch: 30000,
             signers: genesis::dev_accounts().into_iter().take(5).collect(),
         };
-        PoaChainSpec::new(genesis, poa_config)
+        PoaChainSpec::new_with_forks(genesis, poa_config, cli.osaka_time)
     } else {
         // Dev mode: use CLI chain_id and block_time
         let mut config = genesis::GenesisConfig::dev();
@@ -183,7 +183,7 @@ async fn main() -> eyre::Result<()> {
             epoch: 30000,
             signers: genesis::dev_signers(),
         };
-        PoaChainSpec::new(genesis, poa_config)
+        PoaChainSpec::new_with_forks(genesis, poa_config, cli.osaka_time)
     };
 
     let chain_spec_arc = Arc::new(poa_chain);

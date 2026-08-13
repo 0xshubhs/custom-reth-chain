@@ -263,6 +263,22 @@ pub struct Cli {
     #[arg(long)]
     pub prefund_all: Option<String>,
 
+    /// Schedule the Osaka (Fusaka) hardfork at a unix timestamp.
+    ///
+    /// Activates the Osaka EIP set (CLZ opcode, P256 precompile, modexp repricing,
+    /// EIP-7825 tx gas cap — neutralised on this chain, see PoaEvmConfig) for the
+    /// first block whose timestamp is >= this value. Omit to stay on Prague rules.
+    ///
+    /// LIVE-CHAIN RULES:
+    /// 1. The timestamp MUST be in the future — never retro-activate a fork on
+    ///    an existing datadir.
+    /// 2. Every node (all signers + RPC) must be restarted with the SAME value
+    ///    before the timestamp is reached. The schedule is part of the EIP-2124
+    ///    fork id: a node with a different --osaka-time refuses to peer.
+    /// 3. Rehearse on a copy of a production datadir first.
+    #[arg(long)]
+    pub osaka_time: Option<u64>,
+
     /// Infinite-fund an address via EIP-4895 withdrawals (repeatable).
     ///
     /// On every block, the payload builder injects a withdrawal crediting this

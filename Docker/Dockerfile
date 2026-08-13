@@ -31,7 +31,7 @@ RUN mkdir -p src && \
 
 # Now copy the real source and build
 COPY src ./src
-RUN touch src/lib.rs src/main.rs && cargo build --release
+RUN touch src/lib.rs src/main.rs && cargo build --release --locked
 
 # ── Runtime image ────────────────────────────────────────────────────────────
 FROM debian:bookworm-slim

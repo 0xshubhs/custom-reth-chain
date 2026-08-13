@@ -16,10 +16,13 @@
 //! # Architecture
 //! ```text
 //!   PoaNode → PoaExecutorBuilder.build_evm()
-//!              → EthEvmConfig::new_with_evm_factory(chain_spec, PoaEvmFactory)
-//!                 → PoaEvmFactory::create_evm(db, env)
-//!                    → patch_env (contract size limits, spec overrides)
-//!                    → EthEvmFactory::create_evm(db, patched_env)
+//!              → PoaEvmConfig::new(chain_spec, PoaEvmFactory)   [wraps EthEvmConfig]
+//!                 ├─ evm_env / next_evm_env / evm_env_for_payload
+//!                 │    → patch_cfg (contract size, EIP-7825 cap lift)
+//!                 │      (pool-visible: tx pool reads these from evm_env)
+//!                 └─ PoaEvmFactory::create_evm(db, env)
+//!                      → patch_env (contract size limits)
+//!                      → EthEvmFactory::create_evm(db, patched_env)
 //! ```
 
 pub mod parallel;
@@ -41,14 +44,28 @@ use alloy_evm::{
 };
 use alloy_primitives::{Address, Log, U256};
 
+use alloy_consensus::Header;
+use alloy_eips::Decodable2718;
 use alloy_evm::eth::spec::EthExecutorSpec;
-use alloy_evm::revm::context::TxEnv;
-use reth_chainspec::EthereumHardforks;
+use alloy_evm::eth::{EthBlockExecutionCtx, EthBlockExecutorFactory};
+use alloy_evm::revm::context::{CfgEnv, TxEnv};
+use alloy_primitives::Bytes;
+use alloy_rpc_types_engine::ExecutionData;
+use core::convert::Infallible;
+use reth_chainspec::{EthChainSpec, EthereumHardforks};
+use reth_ethereum::evm::{EthBlockAssembler, RethReceiptBuilder};
 use reth_ethereum::node::api::{FullNodeTypes, NodeTypes};
 use reth_ethereum::node::builder::{components::ExecutorBuilder, BuilderContext};
 use reth_ethereum::node::EthEvmConfig;
-use reth_ethereum::EthPrimitives;
+use reth_ethereum::{EthPrimitives, TransactionSigned};
 use reth_ethereum_forks::Hardforks;
+use reth_evm::{
+    ConfigureEngineEvm, ConfigureEvm, EvmEnvFor, ExecutableTxIterator, ExecutionCtxFor,
+    NextBlockEnvAttributes,
+};
+use reth_primitives_traits::{SealedBlock, SealedHeader, SignedTransaction};
+use reth_storage_api::errors::any::AnyError;
+use std::sync::Arc;
 
 // ─── Calldata gas discount inspector ──────────────────────────────────────────
 
@@ -367,15 +384,18 @@ impl<Node> ExecutorBuilder<Node> for PoaExecutorBuilder
 where
     Node: FullNodeTypes<
         Types: NodeTypes<
-            ChainSpec: Hardforks + EthExecutorSpec + EthereumHardforks,
+            ChainSpec: Hardforks
+                           + EthExecutorSpec
+                           + EthereumHardforks
+                           + EthChainSpec<Header = Header>,
             Primitives = EthPrimitives,
         >,
     >,
 {
-    type EVM = EthEvmConfig<<Node::Types as NodeTypes>::ChainSpec, PoaEvmFactory>;
+    type EVM = PoaEvmConfig<<Node::Types as NodeTypes>::ChainSpec>;
 
     async fn build_evm(self, ctx: &BuilderContext<Node>) -> eyre::Result<Self::EVM> {
-        Ok(EthEvmConfig::new_with_evm_factory(
+        Ok(PoaEvmConfig::new(
             ctx.chain_spec(),
             PoaEvmFactory::new(
                 self.max_contract_size,
@@ -383,6 +403,139 @@ where
                 self.zero_gas,
             ),
         ))
+    }
+}
+
+// ─── PoaEvmConfig ─────────────────────────────────────────────────────────────
+
+/// POA-customised [`ConfigureEvm`] implementation.
+///
+/// Wraps [`EthEvmConfig`] (parameterised with [`PoaEvmFactory`]) and patches the
+/// `CfgEnv` of every environment it hands out (`evm_env`, `next_evm_env`,
+/// `evm_env_for_payload`).  Patching here matters beyond execution: reth's
+/// transaction pool reads `max_initcode_size` and `tx_gas_limit_cap` from the
+/// tip block's `evm_env`, so overrides applied only inside
+/// [`PoaEvmFactory::patch_env`] (at EVM creation) would be invisible to the
+/// pool, which would then reject transactions the EVM executes fine.
+///
+/// Overrides applied:
+/// 1. **Contract size** (`--max-contract-size`) — mirrors
+///    [`PoaEvmFactory::patch_env`] so pool-side EIP-3860 initcode checks match
+///    the EVM.
+/// 2. **EIP-7825 neutralised** — `tx_gas_limit_cap = u64::MAX`.  Osaka caps a
+///    single transaction at ~16.7M gas on mainnet; this chain runs 300M–1B gas
+///    blocks and deploys contracts far past that cap, so the cap is lifted
+///    unconditionally (pre-Osaka the effective default is unlimited anyway, so
+///    this is a no-op until `--osaka-time` activates).
+#[derive(Debug, Clone)]
+pub struct PoaEvmConfig<ChainSpec> {
+    inner: EthEvmConfig<ChainSpec, PoaEvmFactory>,
+    /// Copied from the factory so `patch_cfg` needs no factory access.
+    max_contract_size: Option<usize>,
+}
+
+impl<ChainSpec> PoaEvmConfig<ChainSpec> {
+    /// Create a config from the chain spec and a fully-configured [`PoaEvmFactory`].
+    pub fn new(chain_spec: Arc<ChainSpec>, factory: PoaEvmFactory) -> Self {
+        let max_contract_size = factory.max_contract_size;
+        Self {
+            inner: EthEvmConfig::new_with_evm_factory(chain_spec, factory),
+            max_contract_size,
+        }
+    }
+
+    /// Apply the POA `CfgEnv` overrides (see type-level docs).
+    fn patch_cfg(&self, cfg: &mut CfgEnv<SpecId>) {
+        if let Some(limit) = self.max_contract_size {
+            cfg.limit_contract_code_size = Some(limit);
+            cfg.limit_contract_initcode_size = Some(limit * 2);
+        }
+        cfg.tx_gas_limit_cap = Some(u64::MAX);
+    }
+}
+
+impl<ChainSpec> ConfigureEvm for PoaEvmConfig<ChainSpec>
+where
+    ChainSpec: EthExecutorSpec + EthChainSpec<Header = Header> + Hardforks + 'static,
+{
+    type Primitives = EthPrimitives;
+    type Error = Infallible;
+    type NextBlockEnvCtx = NextBlockEnvAttributes;
+    type BlockExecutorFactory =
+        EthBlockExecutorFactory<RethReceiptBuilder, Arc<ChainSpec>, PoaEvmFactory>;
+    type BlockAssembler = EthBlockAssembler<ChainSpec>;
+
+    fn block_executor_factory(&self) -> &Self::BlockExecutorFactory {
+        self.inner.block_executor_factory()
+    }
+
+    fn block_assembler(&self) -> &Self::BlockAssembler {
+        self.inner.block_assembler()
+    }
+
+    fn evm_env(&self, header: &Header) -> Result<EvmEnv<SpecId>, Self::Error> {
+        let mut env = self.inner.evm_env(header)?;
+        self.patch_cfg(&mut env.cfg_env);
+        Ok(env)
+    }
+
+    fn next_evm_env(
+        &self,
+        parent: &Header,
+        attributes: &NextBlockEnvAttributes,
+    ) -> Result<EvmEnv<SpecId>, Self::Error> {
+        let mut env = self.inner.next_evm_env(parent, attributes)?;
+        self.patch_cfg(&mut env.cfg_env);
+        Ok(env)
+    }
+
+    fn context_for_block<'a>(
+        &self,
+        block: &'a SealedBlock<reth_ethereum::Block>,
+    ) -> Result<EthBlockExecutionCtx<'a>, Self::Error> {
+        self.inner.context_for_block(block)
+    }
+
+    fn context_for_next_block(
+        &self,
+        parent: &SealedHeader,
+        attributes: Self::NextBlockEnvCtx,
+    ) -> Result<EthBlockExecutionCtx<'_>, Self::Error> {
+        self.inner.context_for_next_block(parent, attributes)
+    }
+}
+
+impl<ChainSpec> ConfigureEngineEvm<ExecutionData> for PoaEvmConfig<ChainSpec>
+where
+    ChainSpec: EthExecutorSpec + EthChainSpec<Header = Header> + Hardforks + 'static,
+{
+    fn evm_env_for_payload(&self, payload: &ExecutionData) -> Result<EvmEnvFor<Self>, Self::Error> {
+        let mut env = self.inner.evm_env_for_payload(payload)?;
+        self.patch_cfg(&mut env.cfg_env);
+        Ok(env)
+    }
+
+    fn context_for_payload<'a>(
+        &self,
+        payload: &'a ExecutionData,
+    ) -> Result<ExecutionCtxFor<'a, Self>, Self::Error> {
+        self.inner.context_for_payload(payload)
+    }
+
+    fn tx_iterator_for_payload(
+        &self,
+        payload: &ExecutionData,
+    ) -> Result<impl ExecutableTxIterator<Self>, Self::Error> {
+        // Mirrors EthEvmConfig::tx_iterator_for_payload — the inner method's
+        // return type is opaque (`impl ExecutableTxIterator<EthEvmConfig<..>>`),
+        // so it cannot be delegated across the wrapper type.
+        let txs = payload.payload.transactions().clone();
+        let convert = |tx: Bytes| {
+            let tx = TransactionSigned::decode_2718_exact(tx.as_ref()).map_err(AnyError::new)?;
+            let signer = tx.try_recover().map_err(AnyError::new)?;
+            Ok::<_, AnyError>(tx.with_signer(signer))
+        };
+        Ok((txs, convert))
     }
 }
 
@@ -537,5 +690,75 @@ mod tests {
     fn test_poa_executor_builder_zero_gas() {
         let builder = PoaExecutorBuilder::new(None, 4, true);
         assert!(builder.zero_gas);
+    }
+
+    // ── PoaEvmConfig (pool-visible CfgEnv overrides) ──────────────────────────
+
+    fn dev_evm_config(max_contract_size: Option<usize>) -> PoaEvmConfig<reth_chainspec::ChainSpec> {
+        let chain = crate::chainspec::PoaChainSpec::dev_chain();
+        // The node hands the inner reth ChainSpec to the executor builder
+        // (PoaNode's NodeTypes::ChainSpec = ChainSpec) — mirror that here.
+        PoaEvmConfig::new(
+            Arc::clone(chain.inner()),
+            PoaEvmFactory::new(max_contract_size, 4, false),
+        )
+    }
+
+    #[test]
+    fn test_evm_config_lifts_tx_gas_cap() {
+        let config = dev_evm_config(None);
+        let env = config.evm_env(&Header::default()).unwrap();
+        // EIP-7825 neutralised — pool and EVM accept arbitrarily large txs.
+        assert_eq!(env.cfg_env.tx_gas_limit_cap, Some(u64::MAX));
+    }
+
+    #[test]
+    fn test_evm_config_patches_contract_size_in_evm_env() {
+        let config = dev_evm_config(Some(524_288));
+        let env = config.evm_env(&Header::default()).unwrap();
+        assert_eq!(env.cfg_env.limit_contract_code_size, Some(524_288));
+        assert_eq!(env.cfg_env.limit_contract_initcode_size, Some(1_048_576));
+    }
+
+    #[test]
+    fn test_evm_config_no_contract_size_override_by_default() {
+        let config = dev_evm_config(None);
+        let env = config.evm_env(&Header::default()).unwrap();
+        assert!(env.cfg_env.limit_contract_code_size.is_none());
+    }
+
+    #[test]
+    fn test_scheduled_osaka_selects_osaka_spec_and_keeps_cap_lifted() {
+        // End-to-end: --osaka-time flows chainspec → evm_env spec selection,
+        // while the EIP-7825 cap stays lifted post-fork.
+        let t = 1_900_000_000u64;
+        let genesis = crate::genesis::create_dev_genesis();
+        let poa_config = crate::chainspec::PoaConfig {
+            period: 1,
+            epoch: 30000,
+            signers: crate::genesis::dev_signers(),
+        };
+        let chain = crate::chainspec::PoaChainSpec::new_with_forks(genesis, poa_config, Some(t));
+        let config = PoaEvmConfig::new(
+            Arc::clone(chain.inner()),
+            PoaEvmFactory::new(None, 4, false),
+        );
+
+        let pre_fork = Header {
+            timestamp: t - 1,
+            ..Default::default()
+        };
+        let post_fork = Header {
+            timestamp: t,
+            ..Default::default()
+        };
+
+        let pre_env = config.evm_env(&pre_fork).unwrap();
+        assert_eq!(pre_env.cfg_env.spec, SpecId::PRAGUE);
+
+        let post_env = config.evm_env(&post_fork).unwrap();
+        assert_eq!(post_env.cfg_env.spec, SpecId::OSAKA);
+        // The cap lift is what keeps 300M-gas deploys working after the fork.
+        assert_eq!(post_env.cfg_env.tx_gas_limit_cap, Some(u64::MAX));
     }
 }

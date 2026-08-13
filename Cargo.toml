@@ -7,27 +7,29 @@ license = "MIT"
 description = "A custom POA (Proof of Authority) node implementation using Reth"
 
 [dependencies]
-# Reth core dependencies (tracks main branch - `just update` fetches latest)
-reth-chainspec = { git = "https://github.com/paradigmxyz/reth", branch = "main" }
-reth-consensus = { git = "https://github.com/paradigmxyz/reth", branch = "main" }
-reth-ethereum = { git = "https://github.com/paradigmxyz/reth", branch = "main", features = ["node"] }
-reth-ethereum-forks = { git = "https://github.com/paradigmxyz/reth", branch = "main" }
+# Reth core dependencies — PINNED to a single commit so rebuilds never silently
+# change the reth version (datadir/DB format compatibility across all deployed
+# chains depends on this). Upgrade deliberately with `just upgrade-reth <rev>`.
+reth-chainspec = { git = "https://github.com/paradigmxyz/reth", rev = "5bfe2c8b13e8ed1f25bb9d091faa7adfb24c4ab4" }
+reth-consensus = { git = "https://github.com/paradigmxyz/reth", rev = "5bfe2c8b13e8ed1f25bb9d091faa7adfb24c4ab4" }
+reth-ethereum = { git = "https://github.com/paradigmxyz/reth", rev = "5bfe2c8b13e8ed1f25bb9d091faa7adfb24c4ab4", features = ["node"] }
+reth-ethereum-forks = { git = "https://github.com/paradigmxyz/reth", rev = "5bfe2c8b13e8ed1f25bb9d091faa7adfb24c4ab4" }
 reth-primitives-traits = "0.1.0"
-reth-execution-types = { git = "https://github.com/paradigmxyz/reth", branch = "main" }
-reth-network-peers = { git = "https://github.com/paradigmxyz/reth", branch = "main" }
-reth-tracing = { git = "https://github.com/paradigmxyz/reth", branch = "main" }
-reth-payload-primitives = { git = "https://github.com/paradigmxyz/reth", branch = "main" }
-reth-db = { git = "https://github.com/paradigmxyz/reth", branch = "main" }
+reth-execution-types = { git = "https://github.com/paradigmxyz/reth", rev = "5bfe2c8b13e8ed1f25bb9d091faa7adfb24c4ab4" }
+reth-network-peers = { git = "https://github.com/paradigmxyz/reth", rev = "5bfe2c8b13e8ed1f25bb9d091faa7adfb24c4ab4" }
+reth-tracing = { git = "https://github.com/paradigmxyz/reth", rev = "5bfe2c8b13e8ed1f25bb9d091faa7adfb24c4ab4" }
+reth-payload-primitives = { git = "https://github.com/paradigmxyz/reth", rev = "5bfe2c8b13e8ed1f25bb9d091faa7adfb24c4ab4" }
+reth-db = { git = "https://github.com/paradigmxyz/reth", rev = "5bfe2c8b13e8ed1f25bb9d091faa7adfb24c4ab4" }
 
 # Payload builder dependencies
-reth-ethereum-payload-builder = { git = "https://github.com/paradigmxyz/reth", branch = "main" }
-reth-basic-payload-builder = { git = "https://github.com/paradigmxyz/reth", branch = "main" }
-reth-evm = { git = "https://github.com/paradigmxyz/reth", branch = "main" }
-reth-transaction-pool = { git = "https://github.com/paradigmxyz/reth", branch = "main" }
-reth-ethereum-engine-primitives = { git = "https://github.com/paradigmxyz/reth", branch = "main" }
-reth-payload-builder-primitives = { git = "https://github.com/paradigmxyz/reth", branch = "main" }
-reth-storage-api = { git = "https://github.com/paradigmxyz/reth", branch = "main" }
-reth-rpc-server-types = { git = "https://github.com/paradigmxyz/reth", branch = "main" }
+reth-ethereum-payload-builder = { git = "https://github.com/paradigmxyz/reth", rev = "5bfe2c8b13e8ed1f25bb9d091faa7adfb24c4ab4" }
+reth-basic-payload-builder = { git = "https://github.com/paradigmxyz/reth", rev = "5bfe2c8b13e8ed1f25bb9d091faa7adfb24c4ab4" }
+reth-evm = { git = "https://github.com/paradigmxyz/reth", rev = "5bfe2c8b13e8ed1f25bb9d091faa7adfb24c4ab4" }
+reth-transaction-pool = { git = "https://github.com/paradigmxyz/reth", rev = "5bfe2c8b13e8ed1f25bb9d091faa7adfb24c4ab4" }
+reth-ethereum-engine-primitives = { git = "https://github.com/paradigmxyz/reth", rev = "5bfe2c8b13e8ed1f25bb9d091faa7adfb24c4ab4" }
+reth-payload-builder-primitives = { git = "https://github.com/paradigmxyz/reth", rev = "5bfe2c8b13e8ed1f25bb9d091faa7adfb24c4ab4" }
+reth-storage-api = { git = "https://github.com/paradigmxyz/reth", rev = "5bfe2c8b13e8ed1f25bb9d091faa7adfb24c4ab4" }
+reth-rpc-server-types = { git = "https://github.com/paradigmxyz/reth", rev = "5bfe2c8b13e8ed1f25bb9d091faa7adfb24c4ab4" }
 
 # EVM factory customization (Phase 2: contract size override)
 alloy-evm = "0.30"

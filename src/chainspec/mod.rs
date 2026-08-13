@@ -39,8 +39,21 @@ pub struct PoaChainSpec {
 impl PoaChainSpec {
     /// Creates a new POA chain spec from genesis and POA config
     pub fn new(genesis: Genesis, poa_config: PoaConfig) -> Self {
+        Self::new_with_forks(genesis, poa_config, None)
+    }
+
+    /// Creates a new POA chain spec, optionally scheduling the Osaka (Fusaka)
+    /// hardfork at a future unix timestamp (`--osaka-time`).
+    ///
+    /// Scheduling a fork changes the EIP-2124 fork id, so on a live network
+    /// every node must be restarted with the same schedule before activation.
+    pub fn new_with_forks(
+        genesis: Genesis,
+        poa_config: PoaConfig,
+        osaka_time: Option<u64>,
+    ) -> Self {
         // Build hardforks - enable all Ethereum hardforks for mainnet compatibility
-        let hardforks = hardforks::mainnet_compatible_hardforks();
+        let hardforks = hardforks::mainnet_compatible_hardforks_with(osaka_time);
 
         let genesis_header = reth_chainspec::make_genesis_header(&genesis, &hardforks);
 
@@ -332,6 +345,78 @@ mod tests {
             .active_at_timestamp(0));
         assert!(chain.fork(EthereumHardfork::Cancun).active_at_timestamp(0));
         assert!(chain.fork(EthereumHardfork::Prague).active_at_timestamp(0));
+    }
+
+    #[test]
+    fn test_osaka_unscheduled_by_default() {
+        let chain = PoaChainSpec::dev_chain();
+        assert_eq!(chain.fork(EthereumHardfork::Osaka), ForkCondition::Never);
+    }
+
+    #[test]
+    fn test_osaka_scheduled_via_new_with_forks() {
+        let t = 1_900_000_000u64;
+        let genesis = crate::genesis::create_dev_genesis();
+        let poa_config = PoaConfig {
+            period: 1,
+            epoch: 30000,
+            signers: crate::genesis::dev_signers(),
+        };
+        let chain = PoaChainSpec::new_with_forks(genesis, poa_config, Some(t));
+        let osaka = chain.fork(EthereumHardfork::Osaka);
+        assert!(!osaka.active_at_timestamp(t - 1));
+        assert!(osaka.active_at_timestamp(t));
+        // Earlier forks still active at genesis
+        assert!(chain.fork(EthereumHardfork::Prague).active_at_timestamp(0));
+    }
+
+    #[test]
+    fn test_future_osaka_does_not_change_genesis_hash() {
+        // A future-scheduled fork must not alter the genesis header — otherwise
+        // an existing datadir would be rejected on restart.
+        let poa_config = PoaConfig {
+            period: 1,
+            epoch: 30000,
+            signers: crate::genesis::dev_signers(),
+        };
+        let without = PoaChainSpec::new_with_forks(
+            crate::genesis::create_dev_genesis(),
+            poa_config.clone(),
+            None,
+        );
+        let with = PoaChainSpec::new_with_forks(
+            crate::genesis::create_dev_genesis(),
+            poa_config,
+            Some(1_900_000_000),
+        );
+        assert_eq!(without.genesis_hash(), with.genesis_hash());
+    }
+
+    #[test]
+    fn test_osaka_schedule_changes_fork_id() {
+        // Scheduling Osaka changes the EIP-2124 fork id — all nodes must be
+        // restarted with the same --osaka-time or they refuse to peer.
+        let poa_config = PoaConfig {
+            period: 1,
+            epoch: 30000,
+            signers: crate::genesis::dev_signers(),
+        };
+        let without = PoaChainSpec::new_with_forks(
+            crate::genesis::create_dev_genesis(),
+            poa_config.clone(),
+            None,
+        );
+        let with = PoaChainSpec::new_with_forks(
+            crate::genesis::create_dev_genesis(),
+            poa_config,
+            Some(1_900_000_000),
+        );
+        let head = Head {
+            number: 1,
+            timestamp: 100,
+            ..Default::default()
+        };
+        assert_ne!(without.fork_id(&head), with.fork_id(&head));
     }
 
     #[test]

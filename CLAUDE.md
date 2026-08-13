@@ -4,7 +4,7 @@
 
 Custom Proof of Authority (POA) blockchain built on [Reth](https://github.com/paradigmxyz/reth) (Rust Ethereum client). The node is Ethereum mainnet-compatible for smart contract execution, hardforks, and JSON-RPC APIs, but replaces beacon consensus with a POA signer-based model.
 
-**Reth:** Tracks `main` branch (latest). Use `just build` to fetch latest + build.
+**Reth:** PINNED to a single commit (`rev = "..."` in Cargo.toml + committed Cargo.lock) so rebuilds never silently change the reth version — datadir/DB format compatibility on the deployed chains (mahafraxn, mahadelta, propexty) depends on this. `just build` is deterministic (`--locked`). Upgrading reth is a deliberate act: `just upgrade-reth <rev>`, then test the new binary against a COPY of a production datadir before deploying (reth storage-format changes can make old datadirs unreadable; rollback = restore the datadir backup, not just the old binary).
 
 ## Architecture
 
@@ -24,7 +24,7 @@ Current State:
     ├── Engine API: PoaEngineValidator (strips/restores 97-byte extra_data around alloy's 32-byte limit)
     ├── Block Rewards: EIP-1967 Miner Proxy at 0x...1967 (coinbase) → Treasury
     ├── Governance: Gnosis Safe multisig → ChainConfig / SignerRegistry / Treasury / Timelock
-    ├── Hardforks: Frontier through Prague (all active at genesis)
+    ├── Hardforks: Frontier through Prague (all active at genesis); Osaka schedulable on a LIVE chain via --osaka-time (EIP-7825 tx gas cap neutralised by PoaEvmConfig)
     ├── Metrics: PhaseTimer (build + sign timing in payload builder), BlockMetrics, ChainMetrics (rolling window)
     ├── StateDiff: StateDiffBuilder wired in main.rs — builds StateDiff from execution_outcome() per block
     ├── RPC: HTTP (8545) + WS (8546) + meow_*/clique_*/admin_* namespaces on 0.0.0.0
@@ -67,7 +67,7 @@ The `src/` directory uses a modular structure with **~47 Rust files** across **1
 | Shared | `src/{lib,constants,errors}.rs` | Module root + constants + re-exports | — |
 | Bytecodes | `src/bytecodes/` | Pre-compiled contract bytecodes (.bin/.hex, 13 contracts) | — |
 
-**Total: ~16,200 lines Rust across ~47 files, 424 tests passing (2026-03-16)**
+**Total: ~16,200 lines Rust across ~47 files, 434 tests passing (2026-03-16)**
 
 ### File-Level Breakdown
 
@@ -170,6 +170,7 @@ src/
 - `KeystoreManager` → `src/keystore/mod.rs` - EIP-2335 encrypted key storage (PBKDF2 + AES-128-CTR)
 - `MetricsRegistry` → `src/metrics/registry.rs` - thread-safe Prometheus metrics (19 atomic counters + TCP HTTP server)
 - `PoaEvmFactory` → `src/evm/mod.rs` - wraps `EthEvmFactory`, patches `CfgEnv` (contract size + calldata gas)
+- `PoaEvmConfig<ChainSpec>` → `src/evm/mod.rs` - wraps `EthEvmConfig`, patches `CfgEnv` in `evm_env`/`next_evm_env`/`evm_env_for_payload` (pool-visible: contract size + EIP-7825 tx gas cap lifted to u64::MAX)
 - `PoaExecutorBuilder` → `src/evm/mod.rs` - replaces `EthereumExecutorBuilder` in `PoaNode`
 - `CalldataDiscountInspector<I>` → `src/evm/mod.rs` - wraps any `Inspector<CTX>`, applies calldata discount via `Gas::erase_cost`
 - `ParallelSchedule` → `src/evm/parallel.rs` - DAG-based tx batch scheduler
@@ -228,7 +229,7 @@ RuntimeBuilder::new(
 - [x] External HTTP (8545) + WS (8546) RPC on 0.0.0.0
 - [x] Chain ID 9323310 everywhere
 - [x] CLI: `--gas-limit`, `--eager-mining`, `--signer-key`, `--production`, `--no-dev`, `--port`, `--bootnodes`, `--disable-discovery`, `--mining`, `--max-contract-size`, `--cache-size`, `--calldata-gas`
-- [x] 424 tests passing
+- [x] 434 tests passing
 
 ### Phase 3 — Governance (100%)
 - [x] Gnosis Safe v1.3.0 in genesis: Singleton, Proxy Factory, Fallback Handler, MultiSend
@@ -292,7 +293,7 @@ RuntimeBuilder::new(
 - [x] Comprehensive architecture documentation (`md/Architecture.md`, updated)
 - [x] Zero compiler warnings, clean on rustc 1.93.1+
 - [x] CI/CD: GitHub Actions (check, test, clippy, fmt, build-release)
-- [x] 424 tests: consensus (59), onchain (56), genesis (33), clique RPC (28), statediff (28), chainspec (27), evm (54: 17 mod + 25 parallel + 12 bench), admin RPC (24), signer (21), keystore (20), cache (20), payload (16), metrics/registry (16), metrics (19), meow RPC (9), node (8), output (4)
+- [x] 434 tests: consensus (59), onchain (56), genesis (33), clique RPC (28), statediff (28), chainspec (27), evm (54: 17 mod + 25 parallel + 12 bench), admin RPC (24), signer (21), keystore (20), cache (20), payload (16), metrics/registry (16), metrics (19), meow RPC (9), node (8), output (4)
 
 ### Phase 2.12-13 — Calldata Gas + Parallel Foundation (100%)
 - [x] `CalldataDiscountInspector<I>` — wraps any `Inspector<CTX>`, applies discount once per tx via `initialize_interp` + `Gas::erase_cost`; discount = `(16 - cost) × non_zero_bytes`
@@ -353,6 +354,7 @@ RuntimeBuilder::new(
 | `--archive` | `bool` | `false` | Run as archive node (no state pruning) |
 | `--gpo-blocks` | `u64` | `20` | Gas price oracle: number of recent blocks to sample |
 | `--gpo-percentile` | `u64` | `60` | Gas price oracle: percentile for gas price estimation |
+| `--osaka-time` | `Option<u64>` | — | Schedule Osaka (Fusaka) fork at unix timestamp. Live-chain rules: future timestamp only; ALL nodes must restart with the SAME value before it (fork-id changes); rehearse on a datadir copy |
 
 ## Chain Configuration
 
@@ -399,7 +401,7 @@ RuntimeBuilder::new(
 ## Building & Running
 
 ```bash
-# Build (fetches latest reth + all crates, then builds release)
+# Build (deterministic: locked deps, pinned reth rev)
 just build
 
 # Quick build without updating deps
@@ -432,7 +434,7 @@ just docker-multinode
 
 ## Development Notes
 
-- **424 tests**: `just test` (or `cargo test`) — unit + integration tests
+- **434 tests**: `just test` (or `cargo test`) — unit + integration tests
 - **Modular structure**: ~47 files across 13 subdirectories, 18 modules
 - **Architecture doc**: `md/Architecture.md` (1,500+ lines, 14+ Mermaid diagrams) covers every module
 - **3 RPC namespaces**: `meow_*` (chain info), `clique_*` (POA signer management), `admin_*` (node admin + health)
@@ -442,7 +444,7 @@ just docker-multinode
 - Dev mode: auto-mines blocks, relaxed consensus (no signature checks)
 - Production mode: strict consensus with POA signature verification + 97-byte extra_data
 - The `clique` field in genesis config JSON is informational only - not parsed by Reth
-- `just build` runs `cargo update` first to fetch latest reth from main branch
+- `just build` is deterministic (`--locked`, pinned reth rev) — it never updates deps; use `just upgrade-reth <rev>` to deliberately move reth
 - Genesis files are in `genesis/` (`sample-genesis.json`, `production-genesis.json`)
 - Solidity source is in `genesis-contracts/` (not `contracts/`)
 - Docker artifacts are in `Docker/` (not root)
@@ -468,7 +470,7 @@ just docker-multinode
 
 See `md/Remaining.md` for full details. Key remaining phases:
 
-1. **Phase 0-1** — Foundation + Connectable: **COMPLETE** (424 tests, production NodeBuilder, MDBX)
+1. **Phase 0-1** — Foundation + Connectable: **COMPLETE** (434 tests, production NodeBuilder, MDBX)
 2. **Phase 3** — Governance: **COMPLETE** (Timelock, on-chain reads, live signer cache, StateProviderStorageReader)
 3. **Phase 4** — Multi-Node: **COMPLETE** (bootnodes CLI, fork choice, state sync validation, integration tests)
 4. **Phase 2** — Performance (items 10-18 done): 1s/500ms blocks, 300M/1B gas, calldata gas, zero-gas, ParallelSchedule, StateDiffBuilder, build timing; parallel EVM live integration **<-- NEXT**
@@ -478,4 +480,4 @@ See `md/Remaining.md` for full details. Key remaining phases:
 
 Target: **1-second blocks, 5K-10K TPS, full on-chain governance** (vs MegaETH's 10ms/100K TPS but single sequencer)
 
-*Last updated: 2026-03-16 | reth 1.11.0, rustc 1.93.1+, 424 tests, ~16,200 lines, ~47 files*
+*Last updated: 2026-03-16 | reth 1.11.0, rustc 1.93.1+, 434 tests, ~16,200 lines, ~47 files*
