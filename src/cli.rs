@@ -209,14 +209,25 @@ pub struct Cli {
     #[arg(long, default_value = "160")]
     pub rpc_max_response_size: u32,
 
-    /// Enable archive mode (keep all historical state).
+    /// Archive mode: keep all historical state. This is the DEFAULT; the flag
+    /// is still accepted so existing start commands keep working.
     ///
-    /// By default, Reth prunes old state. Archive mode disables pruning
-    /// so all historical state is available for queries like eth_getBalance
-    /// at arbitrary block numbers, debug_traceTransaction, etc.
-    /// Warning: requires significantly more disk space.
-    #[arg(long)]
+    /// All historical state stays available (eth_getBalance at any block,
+    /// debug_traceTransaction, receipts of old transactions), which is what a
+    /// block explorer needs.
+    #[arg(long, conflicts_with = "full")]
     pub archive: bool,
+
+    /// Full-node pruning instead of archive (opt in): receipts and
+    /// account/storage history older than 10,064 blocks are deleted and
+    /// transaction senders are not stored.
+    ///
+    /// Warning: at the pinned reth (5bfe2c8) a datadir started this way does
+    /// not start again after it is stopped: reth's static-file check panics on
+    /// the pruned transaction-senders segment ("would trigger an unwind to
+    /// block 0"). Do not use it for a chain you need to keep.
+    #[arg(long)]
+    pub full: bool,
 
     /// Gas cap applied to `eth_call`, `eth_estimateGas` and `eth_simulateV1`.
     ///

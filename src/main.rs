@@ -365,7 +365,9 @@ async fn main() -> eyre::Result<()> {
 
     // Configure pruning: archive mode disables all pruning.
     // When --archive is NOT set, Reth uses its default pruning behaviour.
-    let pruning_args = if cli.archive {
+    // Archive is the default; --full opts into pruning (see cli.rs).
+    let archive = !cli.full;
+    let pruning_args = if archive {
         // An empty PruningArgs (default) means no pruning flags are set,
         // which results in no pruning config (= archive behaviour).
         PruningArgs::default()
@@ -377,10 +379,11 @@ async fn main() -> eyre::Result<()> {
         // eth_getTransactionReceipt, debug_traceTransaction, eth_getBalance —
         // starts failing at that point with no other symptom.
         output::print_info(
-            "WARNING: state pruning is ON (--archive not set). Receipts and \
+            "WARNING: state pruning is ON (--full). Receipts and \
              account/storage history older than 10064 blocks are deleted, which \
-             silently breaks receipt lookups, tracing and historical balances \
-             for an explorer. Use --archive for any node backing Blockscout.",
+             breaks receipt lookups, tracing and historical balances for an \
+             explorer, and at the pinned reth a pruned datadir does not start \
+             again after a stop. Drop --full to run as an archive node.",
         );
         PruningArgs {
             full: true,
@@ -389,7 +392,7 @@ async fn main() -> eyre::Result<()> {
     };
 
     // Build node configuration with proper data directory
-    let node_config = NodeConfig::default()
+    let mut node_config = NodeConfig::default()
         .with_dev(dev_args)
         .with_rpc(rpc_args)
         .with_network(network_args)
@@ -400,6 +403,17 @@ async fn main() -> eyre::Result<()> {
             datadir: cli.datadir.clone().into(),
             ..Default::default()
         });
+
+    // Write every block to disk as soon as it is canonical. reth's default
+    // (persistence threshold 2) keeps the newest blocks in memory only, and
+    // this node never shuts down gracefully (every stop is a SIGKILL, see the
+    // signal handler below), so each stop, crash, OOM kill or reboot threw
+    // away up to the last 2 blocks and every transaction in them. Proven on a
+    // test node: head 5, on disk 3, kill, restart, head 3; with this setting
+    // head 5 survives the same kill with the same hash. On a chain that seals
+    // a block only when a transaction arrives, writing each one at once costs
+    // nothing. It changes when blocks reach disk, never their contents.
+    node_config.engine.persistence_threshold = 0;
 
     output::print_config(
         is_dev_mode,
@@ -428,6 +442,25 @@ async fn main() -> eyre::Result<()> {
     // Initialize persistent MDBX database (replaces testing_node_with_datadir)
     let db_path = cli.datadir.join("db");
     std::fs::create_dir_all(&db_path)?;
+    // --archive means keep everything. reth falls back to reth.toml's prune
+    // segments when no prune flag is given, so an archive run on a datadir
+    // that was once started without --archive would keep pruning (see
+    // src/datadir.rs). Clear them before the database opens.
+    if archive {
+        match example_custom_poa_node::datadir::force_archive_prune_config(&cli.datadir) {
+            Ok(Some(removed)) => output::print_info(&format!(
+                "--archive: removed pruning from reth.toml ({}); the previous file is reth.toml.pruned.bak",
+                removed.join(", ")
+            )),
+            Ok(None) => {}
+            Err(e) => {
+                return Err(eyre::eyre!(
+                    "--archive: could not check {}/reth.toml: {e}",
+                    cli.datadir.display()
+                ))
+            }
+        }
+    }
     let database = Arc::new(init_db(&db_path, Default::default())?);
 
     // Build and launch the node with PoaNode (custom consensus + payload builder)
@@ -444,7 +477,7 @@ async fn main() -> eyre::Result<()> {
         node_exit_future,
     } = NodeBuilder::new(node_config)
         .with_database(database)
-        .with_launch_context(tasks)
+        .with_launch_context(tasks.clone())
         .node(
             PoaNode::new(chain_spec_arc.clone())
                 .with_dev_mode(is_dev_mode)
@@ -528,8 +561,13 @@ async fn main() -> eyre::Result<()> {
         "RPC payload limits: request={}MB response={}MB",
         cli.rpc_max_request_size, cli.rpc_max_response_size,
     ));
-    if cli.archive {
+    if archive {
         output::print_feature("Archive mode", "all historical state retained");
+    } else {
+        output::print_feature(
+            "Full mode (--full)",
+            "old receipts and history pruned; see cli.rs before using it",
+        );
     }
     output::print_info(&format!(
         "Gas price oracle: {} blocks, {}th percentile",
@@ -550,31 +588,8 @@ async fn main() -> eyre::Result<()> {
         output::print_feature("JSON logging", "structured output enabled");
     }
 
-    // Register graceful shutdown handlers for SIGINT (Ctrl+C) and SIGTERM.
-    // These print a shutdown message before the node exits.
-    tokio::spawn(async {
-        let ctrl_c = tokio::signal::ctrl_c();
-        #[cfg(unix)]
-        {
-            let mut sigterm =
-                tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
-                    .expect("failed to register SIGTERM handler");
-
-            tokio::select! {
-                _ = ctrl_c => {
-                    output::print_shutdown("Received SIGINT (Ctrl+C), shutting down...");
-                }
-                _ = sigterm.recv() => {
-                    output::print_shutdown("Received SIGTERM, shutting down...");
-                }
-            }
-        }
-        #[cfg(not(unix))]
-        {
-            let _ = ctrl_c.await;
-            output::print_shutdown("Received SIGINT (Ctrl+C), shutting down...");
-        }
-    });
+    // SIGINT and SIGTERM stop the node gracefully: see the select! at the end
+    // of main. (This used to only print a line, so every stop was a SIGKILL.)
 
     // Set up performance metrics (Phase 5)
     let chain_metrics = ChainMetrics::default_window();
@@ -729,6 +744,45 @@ async fn main() -> eyre::Result<()> {
     output::print_chain_data(&cli.datadir, mining_interval);
     output::print_running(&cli.http_addr, cli.http_port, &cli.ws_addr, cli.ws_port);
 
-    // Keep the node running
-    node_exit_future.await
+    // Run until the node exits by itself or a stop signal arrives. On a signal,
+    // reth's graceful shutdown stops every task and lets them finish their
+    // work (database writes included) before the process exits, instead of
+    // the process being killed mid-write.
+    tokio::select! {
+        res = node_exit_future => res,
+        sig = wait_for_stop_signal() => {
+            output::print_shutdown(&format!("Received {sig}, shutting down gracefully..."));
+            let runtime = tasks.clone();
+            let clean = tokio::task::spawn_blocking(move || {
+                runtime.graceful_shutdown_with_timeout(Duration::from_secs(30))
+            })
+            .await
+            .unwrap_or(false);
+            if clean {
+                output::print_shutdown("Shut down cleanly: every task finished.");
+            } else {
+                output::print_shutdown("Graceful shutdown timed out after 30s; exiting.");
+            }
+            Ok(())
+        }
+    }
+}
+
+/// Waits for SIGINT (Ctrl+C) or, on unix, SIGTERM (what `docker stop` and
+/// systemd send) and returns its name.
+async fn wait_for_stop_signal() -> &'static str {
+    #[cfg(unix)]
+    {
+        let mut sigterm = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+            .expect("failed to register SIGTERM handler");
+        tokio::select! {
+            _ = tokio::signal::ctrl_c() => "SIGINT",
+            _ = sigterm.recv() => "SIGTERM",
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = tokio::signal::ctrl_c().await;
+        "SIGINT"
+    }
 }

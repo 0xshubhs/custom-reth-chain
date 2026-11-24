@@ -1,0 +1,7 @@
+# Build context for Docker/Dockerfile (context: the repo root). Allow-list:
+# the node build needs only the manifests and src/. Without this the context
+# would include target/ (gigabytes), data/ (a local chain) and the explorer.
+*
+!Cargo.toml
+!Cargo.lock
+!src/

@@ -8,6 +8,7 @@ pub mod chainspec;
 pub mod cli;
 pub mod consensus;
 pub mod constants;
+pub mod datadir;
 pub mod errors;
 pub mod evm;
 pub mod genesis;
