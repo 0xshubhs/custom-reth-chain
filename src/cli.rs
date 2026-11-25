@@ -255,10 +255,12 @@ pub struct Cli {
     /// account/storage history older than 10,064 blocks are deleted and
     /// transaction senders are not stored.
     ///
-    /// Warning: at the pinned reth (5bfe2c8) a datadir started this way does
-    /// not start again after it is stopped: reth's static-file check panics on
-    /// the pruned transaction-senders segment ("would trigger an unwind to
-    /// block 0"). Do not use it for a chain you need to keep.
+    /// Warning: at the pinned reth (5bfe2c8) a datadir started this way and
+    /// stopped within its first few blocks (before reth's pruner first runs)
+    /// does not start again: the static-file check panics on the empty
+    /// transaction-senders segment ("would trigger an unwind to block 0").
+    /// A datadir created this way never stores transaction senders, so it
+    /// keeps sender pruning for good (see main.rs, senders_fully_pruned).
     #[arg(long)]
     pub full: bool,
 

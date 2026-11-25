@@ -20,6 +20,7 @@ reth-network-peers = { git = "https://github.com/paradigmxyz/reth", rev = "5bfe2
 reth-tracing = { git = "https://github.com/paradigmxyz/reth", rev = "5bfe2c8b13e8ed1f25bb9d091faa7adfb24c4ab4" }
 reth-payload-primitives = { git = "https://github.com/paradigmxyz/reth", rev = "5bfe2c8b13e8ed1f25bb9d091faa7adfb24c4ab4" }
 reth-db = { git = "https://github.com/paradigmxyz/reth", rev = "5bfe2c8b13e8ed1f25bb9d091faa7adfb24c4ab4" }
+reth-prune-types = { git = "https://github.com/paradigmxyz/reth", rev = "5bfe2c8b13e8ed1f25bb9d091faa7adfb24c4ab4" }
 
 # Payload builder dependencies
 reth-ethereum-payload-builder = { git = "https://github.com/paradigmxyz/reth", rev = "5bfe2c8b13e8ed1f25bb9d091faa7adfb24c4ab4" }

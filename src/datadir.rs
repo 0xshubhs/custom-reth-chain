@@ -11,9 +11,12 @@
 
 use std::{fs, io, path::Path};
 
-/// Removes every prune segment from a reth.toml and keeps the `[prune.segments]`
-/// table itself empty, which is exactly what reth writes for an archive node.
-/// Everything outside the prune segments is left byte for byte as it was.
+/// Removes the prune segments that delete history (receipts, account and
+/// storage history, bodies) from a reth.toml. `sender_recovery` stays: a
+/// datadir that never stored transaction senders cannot start storing them
+/// (the next block fails to save). Without it the `[prune.segments]` table is
+/// left empty, which is exactly what reth writes for an archive node.
+/// Everything else is left byte for byte as it was.
 ///
 /// Returns the new text and the names of the removed segments, or `None` when
 /// there was nothing to remove.
@@ -42,6 +45,12 @@ pub fn strip_prune_segments(toml: &str) -> Option<(String, Vec<String>)> {
         }
         if in_segments_table && !trimmed.is_empty() && !trimmed.starts_with('#') {
             if let Some((key, _)) = trimmed.split_once('=') {
+                // Sender pruning stays: a datadir that never stored senders
+                // cannot start storing them (see main.rs, senders_fully_pruned).
+                if key.trim() == "sender_recovery" {
+                    out.push_str(line);
+                    continue;
+                }
                 removed.push(key.trim().to_string());
             }
             continue;
@@ -89,14 +98,16 @@ mod tests {
 
     const ARCHIVE: &str = "[stages.era]\n\n[prune]\nblock_interval = 5\nminimum_pruning_distance = 10064\n\n[prune.segments]\n\n[peers]\nrefill_slots_interval = \"5s\"\ntrusted_nodes = []\n";
 
+    /// What a full-node file becomes: history kept, senders still pruned.
+    const FULL_NODE_STRIPPED: &str = "[stages.era]\n\n[prune]\nblock_interval = 5\nminimum_pruning_distance = 10064\n\n[prune.segments]\nsender_recovery = \"full\"\n\n[peers]\nrefill_slots_interval = \"5s\"\ntrusted_nodes = []\n";
+
     #[test]
     fn full_node_file_becomes_the_archive_file() {
         let (out, removed) = strip_prune_segments(FULL_NODE).expect("segments to remove");
-        assert_eq!(out, ARCHIVE);
+        assert_eq!(out, FULL_NODE_STRIPPED);
         assert_eq!(
             removed,
             vec![
-                "sender_recovery",
                 "receipts",
                 "account_history",
                 "storage_history",
@@ -108,6 +119,8 @@ mod tests {
     #[test]
     fn archive_file_is_left_alone() {
         assert!(strip_prune_segments(ARCHIVE).is_none());
+        // A file that only prunes senders has nothing to remove either.
+        assert!(strip_prune_segments(FULL_NODE_STRIPPED).is_none());
     }
 
     #[test]
@@ -116,8 +129,11 @@ mod tests {
         fs::create_dir_all(&dir).unwrap();
         fs::write(dir.join("reth.toml"), FULL_NODE).unwrap();
         let removed = force_archive_prune_config(&dir).unwrap().expect("changed");
-        assert_eq!(removed.len(), 5);
-        assert_eq!(fs::read_to_string(dir.join("reth.toml")).unwrap(), ARCHIVE);
+        assert_eq!(removed.len(), 4);
+        assert_eq!(
+            fs::read_to_string(dir.join("reth.toml")).unwrap(),
+            FULL_NODE_STRIPPED
+        );
         assert_eq!(
             fs::read_to_string(dir.join("reth.toml.pruned.bak")).unwrap(),
             FULL_NODE

@@ -14,7 +14,7 @@ use alloy_consensus::BlockHeader;
 use alloy_primitives::{Address, B256};
 use clap::Parser;
 use futures_util::StreamExt;
-use reth_db::init_db;
+use reth_db::{init_db, tables, transaction::DbTx, Database};
 use reth_ethereum::{
     node::builder::{NodeBuilder, NodeHandle},
     node::core::{
@@ -28,6 +28,7 @@ use reth_ethereum::{
     tasks::{RuntimeBuilder, RuntimeConfig, TokioConfig},
 };
 use reth_network_peers::TrustedPeer;
+use reth_prune_types::PruneSegment;
 use reth_rpc_server_types::{RethRpcModule, RpcModuleSelection};
 use std::{
     net::{IpAddr, Ipv4Addr, SocketAddr},
@@ -437,8 +438,53 @@ async fn main() -> eyre::Result<()> {
     // Configure pruning: archive mode disables all pruning.
     // When --archive is NOT set, Reth uses its default pruning behaviour.
     // Archive is the default; --full opts into pruning (see cli.rs).
+    let db_path = cli.datadir.join("db");
+    std::fs::create_dir_all(&db_path)?;
+    // --archive means keep everything. reth falls back to reth.toml's prune
+    // segments when no prune flag is given, so an archive run on a datadir
+    // that was once started without --archive would keep pruning (see
+    // src/datadir.rs). Clear them before the database opens.
+    if !cli.full {
+        match example_custom_poa_node::datadir::force_archive_prune_config(&cli.datadir) {
+            Ok(Some(removed)) => output::print_info(&format!(
+                "--archive: removed pruning from reth.toml ({}); the previous file is reth.toml.pruned.bak",
+                removed.join(", ")
+            )),
+            Ok(None) => {}
+            Err(e) => {
+                return Err(eyre::eyre!(
+                    "--archive: could not check {}/reth.toml: {e}",
+                    cli.datadir.display()
+                ))
+            }
+        }
+    }
+    let database = Arc::new(init_db(&db_path, Default::default())?);
+
+    // A datadir whose transaction senders were pruned away (sender_recovery =
+    // full, reth's full-node default) holds no senders for its old blocks.
+    // reth keeps senders in a static file that must run contiguously from
+    // block 0, so opening such a datadir without sender pruning makes the next
+    // block unsaveable:
+    //   Persistence service failed err=ProviderError(UnexpectedStaticFileBlockNumber(TransactionSenders, N, 0))
+    // and the node dies, restarts at its last saved block and loses every
+    // pending transaction (seen live on a moved datadir, 2026-11-25). The
+    // database records that the senders were pruned (a SenderRecovery prune
+    // checkpoint in Full mode), so they stay pruned whenever it says so.
+    // Nothing is lost: RPC and the explorer recover a sender from the signature.
+    let senders_pruned = senders_fully_pruned(database.as_ref())?;
+
     let archive = !cli.full;
-    let pruning_args = if archive {
+    let pruning_args = if archive && senders_pruned {
+        output::print_info(
+            "Archive mode, except transaction senders: this datadir was created with \
+             them pruned, so they stay pruned (receipts and history are all kept).",
+        );
+        PruningArgs {
+            sender_recovery_full: true,
+            ..Default::default()
+        }
+    } else if archive {
         // An empty PruningArgs (default) means no pruning flags are set,
         // which results in no pruning config (= archive behaviour).
         PruningArgs::default()
@@ -453,8 +499,8 @@ async fn main() -> eyre::Result<()> {
             "WARNING: state pruning is ON (--full). Receipts and \
              account/storage history older than 10064 blocks are deleted, which \
              breaks receipt lookups, tracing and historical balances for an \
-             explorer, and at the pinned reth a pruned datadir does not start \
-             again after a stop. Drop --full to run as an archive node.",
+             explorer, and a pruned datadir stopped in its first few blocks does \
+             not start again. Drop --full to run as an archive node.",
         );
         PruningArgs {
             full: true,
@@ -511,28 +557,6 @@ async fn main() -> eyre::Result<()> {
     .map_err(|e| eyre::eyre!("{e}"))?;
 
     // Initialize persistent MDBX database (replaces testing_node_with_datadir)
-    let db_path = cli.datadir.join("db");
-    std::fs::create_dir_all(&db_path)?;
-    // --archive means keep everything. reth falls back to reth.toml's prune
-    // segments when no prune flag is given, so an archive run on a datadir
-    // that was once started without --archive would keep pruning (see
-    // src/datadir.rs). Clear them before the database opens.
-    if archive {
-        match example_custom_poa_node::datadir::force_archive_prune_config(&cli.datadir) {
-            Ok(Some(removed)) => output::print_info(&format!(
-                "--archive: removed pruning from reth.toml ({}); the previous file is reth.toml.pruned.bak",
-                removed.join(", ")
-            )),
-            Ok(None) => {}
-            Err(e) => {
-                return Err(eyre::eyre!(
-                    "--archive: could not check {}/reth.toml: {e}",
-                    cli.datadir.display()
-                ))
-            }
-        }
-    }
-    let database = Arc::new(init_db(&db_path, Default::default())?);
 
     // Build and launch the node with PoaNode (custom consensus + payload builder)
     // PoaNode injects PoaConsensus for validation and PoaPayloadBuilder for signed block production.
@@ -856,4 +880,13 @@ async fn wait_for_stop_signal() -> &'static str {
         let _ = tokio::signal::ctrl_c().await;
         "SIGINT"
     }
+}
+
+/// Whether the database records that every transaction sender was pruned
+/// (reth's SenderRecovery prune checkpoint in Full mode). Such a datadir must
+/// keep sender pruning on: see where this is called.
+fn senders_fully_pruned<DB: Database>(db: &DB) -> eyre::Result<bool> {
+    let tx = db.tx()?;
+    let checkpoint = tx.get::<tables::PruneCheckpoints>(PruneSegment::SenderRecovery)?;
+    Ok(checkpoint.is_some_and(|c| c.prune_mode.is_full()))
 }

@@ -2749,6 +2749,7 @@ dependencies = [
  "reth-payload-builder-primitives",
  "reth-payload-primitives",
  "reth-primitives-traits",
+ "reth-prune-types",
  "reth-rpc-server-types",
  "reth-storage-api",
  "reth-tracing",
