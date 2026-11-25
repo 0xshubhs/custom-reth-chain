@@ -42,6 +42,12 @@ pub struct GenesisConfig {
     pub epoch: u64,
     /// Optional extra vanity data (32 bytes)
     pub vanity: [u8; 32],
+    /// The chain admin: governance of ChainConfig, SignerRegistry and Treasury,
+    /// proposer/executor/admin of the Timelock and admin of the miner proxy.
+    /// Defaults to the reserved Safe address [`GOVERNANCE_SAFE_ADDRESS`], which
+    /// has no code, so on the built-in dev/production genesis nobody can act
+    /// as governance. A real network sets it (`governance` in network.toml).
+    pub governance: Address,
 }
 
 impl Default for GenesisConfig {
@@ -54,6 +60,7 @@ impl Default for GenesisConfig {
             block_period: 12,
             epoch: 30000,
             vanity: [0u8; 32],
+            governance: GOVERNANCE_SAFE_ADDRESS,
         }
     }
 }
@@ -72,6 +79,7 @@ impl GenesisConfig {
             block_period: 1, // Phase 2: 1-second blocks
             epoch: 30000,
             vanity: [0u8; 32],
+            governance: GOVERNANCE_SAFE_ADDRESS,
         }
     }
 
@@ -85,6 +93,7 @@ impl GenesisConfig {
             block_period: 12, // Same as Ethereum mainnet
             epoch: 30000,
             vanity: [0u8; 32],
+            governance: GOVERNANCE_SAFE_ADDRESS,
         }
     }
 
@@ -137,6 +146,7 @@ impl GenesisConfig {
             block_period: 2, // Production: 2s (faster than Ethereum's 12s)
             epoch: 30000,
             vanity,
+            governance: GOVERNANCE_SAFE_ADDRESS,
         }
     }
 
@@ -161,6 +171,12 @@ impl GenesisConfig {
     /// Builder method to set block period
     pub fn with_block_period(mut self, period: u64) -> Self {
         self.block_period = period;
+        self
+    }
+
+    /// Builder method to set the chain admin (see [`GenesisConfig::governance`])
+    pub fn with_governance(mut self, governance: Address) -> Self {
+        self.governance = governance;
         self
     }
 
@@ -211,12 +227,12 @@ pub fn create_genesis(config: GenesisConfig) -> Genesis {
 
     // Add EIP-1967 Miner Proxy for anonymous block reward collection
     // Admin is set to the governance Safe address
-    alloc.extend(contracts::miner_proxy_alloc(GOVERNANCE_SAFE_ADDRESS));
+    alloc.extend(contracts::miner_proxy_alloc(config.governance));
 
     // Add governance contracts (ChainConfig, SignerRegistry, Treasury)
     // Governance is set to the governance Safe address
     alloc.extend(governance::governance_contract_alloc(
-        GOVERNANCE_SAFE_ADDRESS,
+        config.governance,
         &config.signers,
         config.gas_limit,
         config.block_period,

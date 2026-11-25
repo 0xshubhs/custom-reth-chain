@@ -1,6 +1,13 @@
 services:
   # POA Node - Custom Reth Chain
   poa-node:
+    # json-file grows without bound by default, and the first symptom is every
+    # service on the box failing to write at once. An archive node with debug/trace is the loudest writer here.
+    logging:
+      driver: json-file
+      options:
+        max-size: "100m"
+        max-file: "5"
     build:
       context: ..
       dockerfile: Docker/Dockerfile

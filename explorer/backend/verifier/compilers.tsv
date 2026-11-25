@@ -1,0 +1,14 @@
+# Compilers bundled into the verifier image (explorer/backend/verifier.Dockerfile).
+#
+# One line per compiler: version, file name, sha256, separated by tabs or
+# spaces. The image build downloads each file from SOLC_BIN_BASE/emscripten-wasm32/
+# and fails if its sha256 is not the one written here. The service reads this
+# same file at start-up and checks every bundled file again before each use.
+#
+# Adding a version: copy its path and sha256 from
+# https://binaries.soliditylang.org/emscripten-wasm32/list.json (the "path"
+# and "sha256" of the build whose "longVersion" you want), add one line,
+# rebuild the image.
+#
+# version	file	sha256
+v0.8.28+commit.7893614a	solc-emscripten-wasm32-v0.8.28+commit.7893614a.js	0x72ef580a6ec5943130028e5294313f24e9435520acc89f8c9dbfd0139d9ae146

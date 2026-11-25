@@ -1,0 +1,18 @@
+/**
+ * CSS entry point.
+ *
+ * Tailwind 4 finds classes by scanning the filesystem from this stylesheet's
+ * location and knows nothing of Vite's `resolve.alias`. Without the `@source`
+ * below the build still succeeds and the tokens are there, but almost no
+ * utility classes are generated. It has to share a pass with the
+ * `@import "tailwindcss"` in globals.css, hence the CSS-native @import.
+ */
+
+@import "./globals.css";
+
+/* The component tree Tailwind must scan: src/styles -> src. */
+@source "../";
+
+@source not "../../dist";
+@source not "../../dev";
+@source not "../../node_modules";

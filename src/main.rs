@@ -11,7 +11,7 @@ use example_custom_poa_node::signer::{self, SignerManager};
 use example_custom_poa_node::statediff::StateDiffBuilder;
 
 use alloy_consensus::BlockHeader;
-use alloy_primitives::{Address, B256, U256};
+use alloy_primitives::{Address, B256};
 use clap::Parser;
 use futures_util::StreamExt;
 use reth_db::init_db;
@@ -63,50 +63,6 @@ fn validate_rpc_modules(flag: &str, selection: &RpcModuleSelection) -> eyre::Res
     Ok(())
 }
 
-/// Parse a balance string into a U256 amount in wei.
-///
-/// Accepts: `"1000000eth"`, `"1e25wei"`, `"1e25"`, or raw decimal wei (`"1000000000000000000"`).
-/// The `eth` suffix multiplies by 10^18. `wei` suffix (or no suffix) is raw wei.
-/// Scientific notation (`1e25`) is expanded before parsing.
-fn parse_balance(s: &str) -> eyre::Result<U256> {
-    let trimmed = s.trim().to_lowercase();
-    let (num_str, multiplier) = if let Some(stripped) = trimmed.strip_suffix("eth") {
-        (
-            stripped.trim().to_string(),
-            U256::from(10u64).pow(U256::from(18u64)),
-        )
-    } else if let Some(stripped) = trimmed.strip_suffix("wei") {
-        (stripped.trim().to_string(), U256::from(1u64))
-    } else {
-        (trimmed.clone(), U256::from(1u64))
-    };
-
-    // Expand scientific notation like "1e25" → "10000...0"
-    let expanded = if let Some((mantissa, exp)) = num_str.split_once('e') {
-        let exp: u32 = exp
-            .parse()
-            .map_err(|_| eyre::eyre!("bad exponent in balance: {s}"))?;
-        let mantissa_parts: Vec<&str> = mantissa.split('.').collect();
-        let (int_part, frac_part) = match mantissa_parts.as_slice() {
-            [i] => (*i, ""),
-            [i, f] => (*i, *f),
-            _ => return Err(eyre::eyre!("bad mantissa in balance: {s}")),
-        };
-        let frac_len = frac_part.len() as u32;
-        if exp < frac_len {
-            return Err(eyre::eyre!("fractional wei not supported: {s}"));
-        }
-        let zeros = "0".repeat((exp - frac_len) as usize);
-        format!("{int_part}{frac_part}{zeros}")
-    } else {
-        num_str
-    };
-
-    let base =
-        U256::from_str_radix(&expanded, 10).map_err(|e| eyre::eyre!("bad balance '{s}': {e}"))?;
-    Ok(base * multiplier)
-}
-
 /// Apply `--prefund-all` and `--fund` CLI flags to a `GenesisConfig` before genesis creation.
 fn apply_fund_flags(
     config: &mut genesis::GenesisConfig,
@@ -114,7 +70,7 @@ fn apply_fund_flags(
     fund: &[String],
 ) -> eyre::Result<()> {
     if let Some(amount_str) = prefund_all {
-        let amount = parse_balance(amount_str)?;
+        let amount = example_custom_poa_node::network::parse_balance(amount_str)?;
         for bal in config.prefunded_accounts.values_mut() {
             *bal = amount;
         }
@@ -129,7 +85,7 @@ fn apply_fund_flags(
             .trim()
             .parse()
             .map_err(|e| eyre::eyre!("bad address in --fund '{entry}': {e}"))?;
-        let amount = parse_balance(amount_str)?;
+        let amount = example_custom_poa_node::network::parse_balance(amount_str)?;
         config.prefunded_accounts.insert(addr, amount);
         output::print_fund(&addr, amount_str);
     }
@@ -145,18 +101,90 @@ async fn main() -> eyre::Result<()> {
     // Parse CLI arguments
     let cli = Cli::parse();
 
+    if cli.print_signer_address {
+        let key = match (&cli.signer_key, &cli.signer_key_file) {
+            (Some(key), _) => key.clone(),
+            (None, Some(path)) => std::fs::read_to_string(path)
+                .map_err(|e| eyre::eyre!("cannot read {}: {e}", path.display()))?,
+            (None, None) => {
+                return Err(eyre::eyre!(
+                    "--print-signer-address needs --signer-key-file or --signer-key"
+                ))
+            }
+        };
+        let manager = SignerManager::new();
+        let addr = manager.add_signer_from_hex(key.trim().trim_start_matches("0x"))?;
+        println!("{addr}");
+        return Ok(());
+    }
+
+    // A network file means a real network: production consensus, its own genesis.
+    let network = match &cli.network {
+        Some(path) => {
+            let file = example_custom_poa_node::network::NetworkFile::load(path)?;
+            let problems = file.problems(cli.allow_dev_keys);
+            if !problems.is_empty() {
+                for p in &problems {
+                    output::print_info(&format!("network file: {p}"));
+                }
+                return Err(eyre::eyre!(
+                    "{} cannot start a network ({} problem{}, listed above)",
+                    path.display(),
+                    problems.len(),
+                    if problems.len() == 1 { "" } else { "s" }
+                ));
+            }
+            if cli.allow_dev_keys {
+                output::print_info(
+                    "WARNING: --allow-dev-keys: public development keys accepted. Rehearsal only.",
+                );
+            }
+            Some(file)
+        }
+        None => None,
+    };
+    let production = cli.production || network.is_some();
+    let zero_gas = cli.zero_gas || network.as_ref().is_some_and(|n| n.zero_gas);
+
     // Determine if we're in dev mode
-    let is_dev_mode = !cli.no_dev && !cli.production;
+    let is_dev_mode = !cli.no_dev && !production;
 
     // Create chain specification based on CLI flags
-    let poa_chain = if cli.production {
+    let poa_chain = if let Some(file) = &network {
+        let config = file.genesis_config()?;
+        if !cli.fund.is_empty() || cli.prefund_all.is_some() {
+            return Err(eyre::eyre!(
+                "--fund/--prefund-all do not apply with --network: put balances in its [prefund] table"
+            ));
+        }
+        let mut genesis = genesis::create_genesis(config);
+        if zero_gas {
+            genesis.base_fee_per_gas = Some(0);
+        }
+        let poa_config = PoaConfig {
+            period: file.block_period,
+            epoch: file.epoch,
+            signers: file.signers.clone(),
+        };
+        output::print_info(&format!(
+            "Network file: chain id {}, {} signer(s), admin {}",
+            file.chain_id,
+            file.signers.len(),
+            file.governance
+        ));
+        PoaChainSpec::new_with_forks(genesis, poa_config, cli.osaka_time)
+    } else if cli.production {
+        output::print_info(
+            "WARNING: --production uses the PUBLIC development keys as signers and prefunded \
+             accounts. Test use only; start a real network with --network <network.toml>.",
+        );
         let mut config = genesis::GenesisConfig::production();
         if let Some(gas_limit) = cli.gas_limit {
             config.gas_limit = gas_limit;
         }
         apply_fund_flags(&mut config, &cli.prefund_all, &cli.fund)?;
         let mut genesis = genesis::create_genesis(config);
-        if cli.zero_gas {
+        if zero_gas {
             genesis.base_fee_per_gas = Some(0);
         }
         let poa_config = PoaConfig {
@@ -175,7 +203,7 @@ async fn main() -> eyre::Result<()> {
         }
         apply_fund_flags(&mut config, &cli.prefund_all, &cli.fund)?;
         let mut genesis = genesis::create_genesis(config);
-        if cli.zero_gas {
+        if zero_gas {
             genesis.base_fee_per_gas = Some(0);
         }
         let poa_config = PoaConfig {
@@ -187,6 +215,27 @@ async fn main() -> eyre::Result<()> {
     };
 
     let chain_spec_arc = Arc::new(poa_chain);
+
+    if cli.check_network {
+        // A dry run for scripts/setup-network.sh: the file passed every check
+        // above; show what it would start and leave the datadir alone.
+        let file = network
+            .as_ref()
+            .expect("--check-network requires --network");
+        println!("network file OK");
+        println!("chain_id      {}", file.chain_id);
+        println!("block_period  {}s", file.block_period);
+        println!("gas_limit     {}", file.gas_limit);
+        println!("admin         {}", file.governance);
+        for s in &file.signers {
+            println!("signer        {s}");
+        }
+        for (addr, amount) in &file.prefund {
+            println!("prefund       {addr} {amount}");
+        }
+        println!("genesis_hash  {}", chain_spec_arc.inner().genesis_hash());
+        return Ok(());
+    }
 
     // Effective mining interval: --block-time-ms overrides --block-time when non-zero (Phase 2.14).
     let mining_interval = if cli.block_time_ms > 0 {
@@ -212,10 +261,32 @@ async fn main() -> eyre::Result<()> {
     // Set up signer manager with runtime key loading
     let signer_manager = Arc::new(SignerManager::new());
 
-    if let Some(key) = &cli.signer_key {
-        // Load signer key from CLI/environment
-        let addr = signer_manager.add_signer_from_hex(key)?;
+    let signer_key = match (&cli.signer_key, &cli.signer_key_file) {
+        (Some(key), _) => Some(key.trim().to_string()),
+        (None, Some(path)) => Some(
+            std::fs::read_to_string(path)
+                .map_err(|e| eyre::eyre!("cannot read --signer-key-file {}: {e}", path.display()))?
+                .trim()
+                .to_string(),
+        ),
+        (None, None) => None,
+    };
+    if let Some(key) = &signer_key {
+        // Load signer key from CLI/environment/file
+        let addr = signer_manager.add_signer_from_hex(key.trim_start_matches("0x"))?;
         output::print_signer_loaded(&addr);
+        if network.is_some() {
+            if !cli.allow_dev_keys && genesis::dev_accounts().contains(&addr) {
+                return Err(eyre::eyre!(
+                    "the signer key is a public development key ({addr}); use the network's own key"
+                ));
+            }
+            if !chain_spec_arc.signers().contains(&addr) {
+                output::print_info(&format!(
+                    "WARNING: {addr} is not one of the network's signers; this node will not seal blocks"
+                ));
+            }
+        }
     } else if is_dev_mode {
         // In dev mode, load dev signers (first 3 keys)
         for key in signer::dev::DEV_PRIVATE_KEYS.iter().take(3) {
@@ -485,7 +556,7 @@ async fn main() -> eyre::Result<()> {
                 .with_cache_size(cli.cache_size)
                 .with_max_contract_size(cli.max_contract_size)
                 .with_calldata_gas(cli.calldata_gas)
-                .with_zero_gas(cli.zero_gas)
+                .with_zero_gas(zero_gas)
                 .with_infinite_fund(cli.infinite_fund.clone()),
         )
         .extend_rpc_modules(move |ctx| {
@@ -581,7 +652,7 @@ async fn main() -> eyre::Result<()> {
             chain_spec_arc.inner().genesis().gas_limit
         },
     ));
-    if cli.zero_gas {
+    if zero_gas {
         output::print_feature("Zero-gas mode", "base fee disabled, gasPrice=0 accepted");
     }
     if cli.log_json {

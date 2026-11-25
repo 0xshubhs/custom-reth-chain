@@ -14,6 +14,7 @@ pub mod evm;
 pub mod genesis;
 pub mod keystore;
 pub mod metrics;
+pub mod network;
 pub mod node;
 pub mod onchain;
 pub mod output;

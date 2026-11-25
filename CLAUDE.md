@@ -192,7 +192,10 @@ src/
 - Solidity source: `genesis-contracts/ChainConfig.sol`, `SignerRegistry.sol`, `Treasury.sol`, `Timelock.sol`
 - Docker: `Docker/Dockerfile`, `Docker/docker-compose.yml`, `Docker/docker-compose-multinode.yml` (3 signer + 1 RPC)
 - Contract ABI signatures: `signatures/signatures-contracts.json`, `signatures-contracts.txt`
-- Explorer: `scoutup-go-explorer/` (Blockscout Go wrapper)
+- Explorer: `explorer/` (own explorer: `backend/` Go indexer+API+verifier, `frontend/` React site, `compose.yaml`, `docs/design.md`); `scoutup-go-explorer/` is the older Blockscout wrapper
+- Public RPC gateway: `rpc-gateway/` (Go). Chain-equality proof: `tools/chain-fingerprint/`
+- One-command stack: `compose.yaml` (node + gateway + explorer), `compose.live.yaml` (real network), `.env.example`
+- Real network: `src/network.rs` (`--network network.toml`), `scripts/setup-network.sh`, `network/network.example.toml`, `docs/deployment.md`
 - CI/CD: `.github/workflows/ci.yml` (check, test, clippy, fmt, build-release)
 - Developer configs: `configs/hardhat.config.js`, `configs/foundry.toml`, `configs/networks.json`, `configs/grafana-meowchain.json`
 
@@ -351,7 +354,13 @@ RuntimeBuilder::new(
 | `--rpc-max-connections` | `u32` | `100` | Maximum concurrent RPC connections |
 | `--rpc-max-request-size` | `u32` | `15` | Maximum RPC request size in MB |
 | `--rpc-max-response-size` | `u32` | `150` | Maximum RPC response size in MB |
-| `--archive` | `bool` | `false` | Run as archive node (no state pruning) |
+| `--archive` | `bool` | `true` (default) | Archive node; accepted for old start commands. Clears prune segments left in reth.toml |
+| `--full` | `bool` | `false` | Prune old state (opt in). At the pinned reth a pruned datadir does NOT restart after a stop |
+| `--network` | `Option<PathBuf>` | none | Start a real network from network.toml (production consensus; refuses dev keys, placeholder admin, public chain ids) |
+| `--signer-key-file` | `Option<PathBuf>` | none | Signer key from a file (env `SIGNER_KEY_FILE`); compose mounts it as a secret |
+| `--check-network` | `bool` | `false` | With --network: validate, print genesis hash, exit |
+| `--print-signer-address` | `bool` | `false` | Print the signer key's address and exit |
+| `--allow-dev-keys` | `bool` | `false` | With --network: accept public dev keys (rehearsal only) |
 | `--gpo-blocks` | `u64` | `20` | Gas price oracle: number of recent blocks to sample |
 | `--gpo-percentile` | `u64` | `60` | Gas price oracle: percentile for gas price estimation |
 | `--osaka-time` | `Option<u64>` | — | Schedule Osaka (Fusaka) fork at unix timestamp. Live-chain rules: future timestamp only; ALL nodes must restart with the SAME value before it (fork-id changes); rehearse on a datadir copy |
@@ -448,7 +457,9 @@ just docker-multinode
 - Genesis files are in `genesis/` (`sample-genesis.json`, `production-genesis.json`)
 - Solidity source is in `genesis-contracts/` (not `contracts/`)
 - Docker artifacts are in `Docker/` (not root)
-- Explorer is `scoutup-go-explorer/` (not `scoutup/`)
+- Explorer is `explorer/` (own); `scoutup-go-explorer/` is the older Blockscout wrapper
+- `--production` alone uses the PUBLIC dev keys as signers/prefund and a codeless placeholder as governance: real networks use `--network`
+- Shutdown: SIGTERM/SIGINT run reth's graceful shutdown; persistence threshold 0 writes every block at once
 
 ## Common Pitfalls
 

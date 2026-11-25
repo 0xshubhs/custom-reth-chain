@@ -1,0 +1,44 @@
+# A real network, layered over compose.yaml. scripts/setup-network.sh writes
+# COMPOSE_FILE=compose.yaml:compose.live.yaml into .env, so a plain
+# `docker compose up -d` uses both files.
+#
+# What changes against the development chain:
+#   - the genesis comes from network/network.toml (your chain id, signers,
+#     chain admin and balances) with production consensus: every block must be
+#     sealed by a listed signer, and its signature is checked;
+#   - this node's signer key is a docker secret (secrets/signer.key, mode 600),
+#     never an environment variable or a command-line argument;
+#   - the public development keys are refused (signer, admin and balances).
+
+services:
+  chain:
+    command:
+      - meowchain
+      - --network
+      - /network/network.toml
+      - --signer-key-file
+      - /run/secrets/signer_key
+      # Seal blocks on this node (eagerly, or every block_period seconds of
+      # network.toml when CHAIN_EAGER_MINING=false).
+      - --mining
+      - --datadir
+      - /data
+      - --http-addr
+      - 0.0.0.0
+      - --http-port
+      - "8545"
+      - --ws-addr
+      - 0.0.0.0
+      - --ws-port
+      - "8546"
+      - --http-corsdomain
+      - ${CHAIN_CORS:-http://localhost:3000}
+      - --disable-discovery
+    volumes:
+      - ./network:/network:ro
+    secrets:
+      - signer_key
+
+secrets:
+  signer_key:
+    file: ${SIGNER_KEY_PATH:-./secrets/signer.key}

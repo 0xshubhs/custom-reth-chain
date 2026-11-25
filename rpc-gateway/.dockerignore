@@ -1,0 +1,5 @@
+# Build context of the gateway image: Go sources only.
+*
+!go.mod
+!go.sum
+!*.go

@@ -1,0 +1,27 @@
+# Example network definition. scripts/setup-network.sh writes the real one to
+# network/network.toml (gitignored); the node reads it with --network.
+#
+# It decides the genesis block: never edit network.toml after the chain has
+# started (the node refuses a datadir whose genesis differs). Signers change
+# on chain through SignerRegistry, by the chain admin.
+
+chain_id     = 4242001          # unused by any public network (check chainlist.org)
+block_period = 2                # seconds
+gas_limit    = 1_000_000_000    # ChainConfig can change it later
+epoch        = 30000            # blocks between signer checkpoints
+
+# Addresses allowed to seal blocks from genesis. Each signer node holds its
+# own key; with N signers the chain seals while more than N/2 are online.
+signers = [
+  "0x1111111111111111111111111111111111111111",
+]
+
+# The chain admin: governance of ChainConfig, SignerRegistry, Treasury, the
+# Timelock and the block-reward proxy. Use a Safe multisig address.
+governance = "0x3333333333333333333333333333333333333333"
+
+vanity   = "Meowchain"          # up to 32 bytes in the genesis extra data
+zero_gas = false                # true: base fee 0, gas price 0 accepted
+
+[prefund]
+"0x4444444444444444444444444444444444444444" = "1000000eth"

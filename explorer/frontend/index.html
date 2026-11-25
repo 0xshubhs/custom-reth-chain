@@ -1,0 +1,30 @@
+<!doctype html>
+<!--
+  Static shell for the Meowchain explorer SPA.
+
+  data-theme is set before first paint by /theme-boot.js (a file, not an
+  inline script: the CSP allows no inline script). The body carries the
+  background token so the page is never white for a frame before React paints.
+-->
+<html lang="en" data-theme="light">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#f7f7f7" />
+    <meta name="google" content="notranslate" />
+
+    <script src="/theme-boot.js"></script>
+
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="/apple-icon.png" />
+  </head>
+  <body class="font-inter antialiased">
+    <div id="root"></div>
+    <noscript>
+      <p style="font-family: system-ui, sans-serif; padding: 24px">
+        The Meowchain explorer needs JavaScript to show blocks and transactions.
+      </p>
+    </noscript>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

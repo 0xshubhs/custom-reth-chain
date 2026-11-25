@@ -19,6 +19,13 @@ services:
   # ── Signer 1 (bootnode) ─────────────────────────────────────────────────
   # All other nodes connect to signer1 as their bootnode.
   signer1:
+    # json-file grows without bound by default, and the first symptom is every
+    # service on the box failing to write at once. An archive node with debug/trace is the loudest writer here.
+    logging:
+      driver: json-file
+      options:
+        max-size: "100m"
+        max-file: "5"
     build:
       context: ..
       dockerfile: Docker/Dockerfile
@@ -58,6 +65,13 @@ services:
 
   # ── Signer 2 ────────────────────────────────────────────────────────────
   signer2:
+    # json-file grows without bound by default, and the first symptom is every
+    # service on the box failing to write at once. An archive node with debug/trace is the loudest writer here.
+    logging:
+      driver: json-file
+      options:
+        max-size: "100m"
+        max-file: "5"
     build:
       context: ..
       dockerfile: Docker/Dockerfile
@@ -101,6 +115,13 @@ services:
 
   # ── Signer 3 ────────────────────────────────────────────────────────────
   signer3:
+    # json-file grows without bound by default, and the first symptom is every
+    # service on the box failing to write at once. An archive node with debug/trace is the loudest writer here.
+    logging:
+      driver: json-file
+      options:
+        max-size: "100m"
+        max-file: "5"
     build:
       context: ..
       dockerfile: Docker/Dockerfile
@@ -146,6 +167,13 @@ services:
   # Syncs blocks from the signer network via P2P but does not produce blocks.
   # Use this endpoint for dApps and external tooling.
   rpc:
+    # json-file grows without bound by default, and the first symptom is every
+    # service on the box failing to write at once. An archive node with debug/trace is the loudest writer here.
+    logging:
+      driver: json-file
+      options:
+        max-size: "100m"
+        max-file: "5"
     build:
       context: ..
       dockerfile: Docker/Dockerfile

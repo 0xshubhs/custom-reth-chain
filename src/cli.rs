@@ -36,12 +36,44 @@ pub struct Cli {
 
     /// Signer private key (hex, without 0x prefix).
     /// Can also be set via SIGNER_KEY environment variable.
-    #[arg(long, env = "SIGNER_KEY")]
+    #[arg(long, env = "SIGNER_KEY", conflicts_with = "signer_key_file")]
     pub signer_key: Option<String>,
 
-    /// Use production genesis configuration (chain ID 9323310)
+    /// Read the signer private key from this file (hex, optional 0x, trailing
+    /// newline ignored). Keeps the key out of the process list and the
+    /// environment; with docker compose it is a mounted secret.
+    #[arg(long, env = "SIGNER_KEY_FILE")]
+    pub signer_key_file: Option<PathBuf>,
+
+    /// Use production genesis configuration (chain ID 9323310).
+    ///
+    /// Its signers and prefunded accounts are the public development keys, so
+    /// it is for testing strict consensus only. A real network uses --network.
     #[arg(long)]
     pub production: bool,
+
+    /// Start a real network from a network.toml (chain id, signers, chain
+    /// admin, genesis balances; see src/network.rs and
+    /// scripts/setup-network.sh). Implies production consensus. The file
+    /// decides the genesis block: keep it with the datadir, never edit it
+    /// after the chain has started.
+    #[arg(long, conflicts_with = "production")]
+    pub network: Option<PathBuf>,
+
+    /// With --network: accept the public development accounts as signers,
+    /// admin or prefunded accounts. Only for a throwaway rehearsal chain.
+    #[arg(long, requires = "network")]
+    pub allow_dev_keys: bool,
+
+    /// Print the address of the signer key (--signer-key-file, --signer-key or
+    /// SIGNER_KEY) and exit. Used by scripts/setup-network.sh.
+    #[arg(long)]
+    pub print_signer_address: bool,
+
+    /// With --network: check the file, print the chain id, signers, admin and
+    /// genesis hash, and exit without opening the datadir.
+    #[arg(long, requires = "network")]
+    pub check_network: bool,
 
     /// Disable dev mode (no auto-mining)
     #[arg(long)]
@@ -52,8 +84,9 @@ pub struct Cli {
     pub gas_limit: Option<u64>,
 
     /// Enable eager mining: build block immediately when transactions arrive
-    /// instead of waiting for block-time interval
-    #[arg(long)]
+    /// instead of waiting for block-time interval.
+    /// Can also be set via EAGER_MINING (true/false).
+    #[arg(long, env = "EAGER_MINING")]
     pub eager_mining: bool,
 
     /// Force interval-based block production even in production mode.

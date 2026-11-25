@@ -1,0 +1,152 @@
+# The block explorer: database, indexer, API, contract verifier and website.
+#
+# Works against any EVM chain's JSON-RPC. The repository's compose.yaml
+# includes this file and points it at the bundled node; to explore another
+# chain, run this file on its own:
+#
+#   CHAIN_RPC_URL=https://rpc.example.org CHAIN_WS_URL=wss://rpc.example.org \
+#     docker compose -f explorer/compose.yaml up -d --build
+#
+# Every setting is in ../.env.example. The chain id, network name and whether
+# the node serves call traces are read from the node when not set.
+
+x-logging: &logging
+  driver: json-file
+  options: {max-size: "50m", max-file: "5"}
+
+x-backend: &backend
+  image: ${EXPLORER_IMAGE:-meowchain/explorer:local}
+  restart: unless-stopped
+  logging: *logging
+  stop_grace_period: 30s
+  read_only: true
+  cap_drop: [ALL]
+  security_opt: ["no-new-privileges:true"]
+  depends_on:
+    explorer-db:
+      condition: service_healthy
+  environment: &backend-env
+    DATABASE_URL: postgres://${EXPLORER_DB_USER:-explorer}:${EXPLORER_DB_PASSWORD:-explorer}@explorer-db:5432/${EXPLORER_DB_NAME:-explorer}?sslmode=disable
+    CHAIN_RPC_URL: ${CHAIN_RPC_URL:-http://chain:8545}
+    CHAIN_WS_URL: ${CHAIN_WS_URL:-ws://chain:8546}
+    CHAIN_ID: ${CHAIN_ID:-0}
+    TRACES: ${TRACES:-auto}
+    HOST: 0.0.0.0
+    PORT: "8080"
+    VERIFIER_URL: http://explorer-verifier:8080
+    INDEXER_HOOK_URL: http://explorer-indexer:8080/hooks/new-block
+    INDEXER_HOOK_TOKEN: ${INDEXER_HOOK_TOKEN:-}
+    NETWORK_NAME: ${NETWORK_NAME:-Meowchain}
+    NATIVE_SYMBOL: ${NATIVE_SYMBOL:-ETH}
+    PUBLIC_RPC_URL: ${PUBLIC_RPC_URL:-http://localhost:8548}
+    EXPLORER_PUBLIC_URL: ${EXPLORER_PUBLIC_URL:-http://localhost:3000}
+    TRUSTED_PROXY_IP: ${TRUSTED_PROXY_IP:-10.0.0.0/8,172.16.0.0/12,192.168.0.0/16}
+    RATE_LIMIT_PER_MIN: ${RATE_LIMIT_PER_MIN:-240}
+    VERIFY_LIMIT_PER_HOUR: ${VERIFY_LIMIT_PER_HOUR:-20}
+    CALL_LIMIT_PER_MIN: ${CALL_LIMIT_PER_MIN:-60}
+    BACKFILL_CONCURRENCY: ${BACKFILL_CONCURRENCY:-4}
+    LOG_LEVEL: ${EXPLORER_LOG_LEVEL:-info}
+  deploy:
+    resources:
+      limits: {memory: 1g}
+
+services:
+  explorer-db:
+    image: postgres:18.7-alpine
+    restart: unless-stopped
+    logging: *logging
+    environment:
+      POSTGRES_DB: ${EXPLORER_DB_NAME:-explorer}
+      POSTGRES_USER: ${EXPLORER_DB_USER:-explorer}
+      POSTGRES_PASSWORD: ${EXPLORER_DB_PASSWORD:-explorer}
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8"
+    volumes:
+      - explorer-db:/var/lib/postgresql
+    shm_size: 256mb
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 30s
+    stop_grace_period: 60s
+    deploy:
+      resources:
+        limits: {memory: 2g}
+
+  # Follows the chain: one writer, every block in one database transaction.
+  explorer-indexer:
+    <<: *backend
+    build:
+      context: ./backend
+    command: ["indexer"]
+
+  # The HTTP API the website (and Blockscout-style verify scripts) talk to.
+  explorer-api:
+    <<: *backend
+    pull_policy: never
+    command: ["api"]
+    ports:
+      - "${BIND_ADDRESS:-127.0.0.1}:${EXPLORER_API_PORT:-4000}:8080"
+
+  # Compiles submitted Solidity and compares it with the chain's bytecode.
+  # Internal only: the API is its one client.
+  explorer-verifier:
+    image: ${EXPLORER_VERIFIER_IMAGE:-meowchain/explorer-verifier:local}
+    build:
+      context: ./backend
+      dockerfile: verifier.Dockerfile
+    restart: unless-stopped
+    logging: *logging
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    tmpfs:
+      - /tmp:mode=1777
+    volumes:
+      - explorer-solc:/var/cache/solc
+    environment:
+      HOST: 0.0.0.0
+      PORT: "8080"
+      # on: any solc release can be used, fetched from binaries.soliditylang.org
+      # and checked against its published sha256. off: only the compilers
+      # baked into the image (backend/verifier/compilers.tsv).
+      SOLC_DOWNLOAD: ${SOLC_DOWNLOAD:-on}
+      COMPILER_CACHE_DIR: /var/cache/solc
+    stop_grace_period: 30s
+    deploy:
+      resources:
+        limits: {memory: 2g}
+
+  # The website. Its nginx also proxies /api/ to explorer-api, so this is the
+  # one port to put behind your TLS proxy.
+  explorer-web:
+    image: ${EXPLORER_WEB_IMAGE:-meowchain/explorer-web:local}
+    build:
+      context: ./frontend
+      args:
+        API_UPSTREAM: explorer-api:8080
+        VITE_SITE_URL: ${EXPLORER_PUBLIC_URL:-http://localhost:3000}
+        VITE_CHAIN_ID: ${CHAIN_ID:-}
+        VITE_CHAIN_RPC: ${PUBLIC_RPC_URL:-http://localhost:8548}
+        VITE_NETWORK_NAME: ${NETWORK_NAME:-Meowchain}
+        VITE_NATIVE_SYMBOL: ${NATIVE_SYMBOL:-ETH}
+        CSP_MODE: ${EXPLORER_CSP_MODE:-enforce}
+    restart: unless-stopped
+    logging: *logging
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    tmpfs:
+      - /tmp:mode=1777
+      - /var/cache/nginx:mode=1777
+    depends_on: [explorer-api]
+    ports:
+      - "${BIND_ADDRESS:-127.0.0.1}:${EXPLORER_WEB_PORT:-3000}:8080"
+    deploy:
+      resources:
+        limits: {memory: 256m}
+
+volumes:
+  explorer-db:
+  explorer-solc:
